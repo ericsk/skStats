@@ -75,7 +75,7 @@ class SystemMonitor: ObservableObject {
             var newTicks: [processor_cpu_load_info] = []
             
             for i in 0..<numCPUs {
-                let offset = i * Int(HOST_CPU_LOAD_INFO_COUNT)
+                let offset = i * 4 // Equivalent of HOST_CPU_LOAD_INFO_COUNT
                 let user = UInt32(infoPointer[offset + Int(CPU_STATE_USER)])
                 let system = UInt32(infoPointer[offset + Int(CPU_STATE_SYSTEM)])
                 let idle = UInt32(infoPointer[offset + Int(CPU_STATE_IDLE)])
@@ -89,7 +89,7 @@ class SystemMonitor: ObservableObject {
                     let totalDiff = Double(user + system + idle + nice) - Double(prev.cpu_ticks.0 + prev.cpu_ticks.1 + prev.cpu_ticks.2 + prev.cpu_ticks.3)
                     let activeDiff = Double(user + system + nice) - Double(prev.cpu_ticks.0 + prev.cpu_ticks.1 + prev.cpu_ticks.3)
                     
-                    let load = totalDiff > 0 ? (activeDiff / totalDiff) : 0.0
+                    let load: Double = totalDiff > 0.0 ? (activeDiff / totalDiff) : 0.0
                     currentLoad.append(load)
                 } else {
                     currentLoad.append(0.0)

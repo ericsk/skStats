@@ -221,7 +221,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = skStats/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = com.ericsk.skStats;
+				PRODUCT_BUNDLE_IDENTIFIER = org.ericsk.skStats;
 				SDKROOT = macosx;
 			};
 			name = Debug;
@@ -236,7 +236,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = skStats/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = com.ericsk.skStats;
+				PRODUCT_BUNDLE_IDENTIFIER = org.ericsk.skStats;
 				SDKROOT = macosx;
 			};
 			name = Release;
