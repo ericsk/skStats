@@ -2,27 +2,82 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var monitor: SystemMonitor
+    @State private var isShowingSettings = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("skStats").font(.headline)
-            Divider()
+        if isShowingSettings {
+            VStack {
+                HStack {
+                    Button(action: {
+                        isShowingSettings = false
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 14))
+                    }
+                    .buttonStyle(.plain)
+                    Text("Settings").font(.headline)
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.top, 10)
+                
+                SettingsView(monitor: monitor)
+            }
+            .frame(width: 320)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    Text("skStats").font(.headline)
+                    Spacer()
+                    Button(action: {
+                        isShowingSettings = true
+                    }) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 14))
+                    }
+                    .buttonStyle(.plain)
+                    
+                    Button(action: {
+                        NSApplication.shared.terminate(nil)
+                    }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14))
+                    }
+                    .buttonStyle(.plain)
+                }
+                Divider()
             
             if monitor.showCPU {
                 VStack(alignment: .leading) {
                     Text("CPU Load")
                         .font(.subheadline)
                         .bold()
-                    HStack(spacing: 4) {
-                        ForEach(0..<monitor.cpuLoadPerCore.count, id: \.self) { index in
-                            VStack {
+                    let count = monitor.cpuLoadPerCore.count
+                    let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: min(8, max(1, count)))
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+                        ForEach(0..<count, id: \.self) { index in
+                            VStack(spacing: 2) {
                                 Text("\(Int(monitor.cpuLoadPerCore[index] * 100))%")
                                     .font(.system(size: 9))
                                 ProgressView(value: monitor.cpuLoadPerCore[index])
                                     .progressViewStyle(LinearProgressViewStyle())
-                                    .frame(width: 25)
                             }
                         }
+                    }
+                }
+                Divider()
+            }
+            
+            if monitor.showGPU {
+                VStack(alignment: .leading) {
+                    Text("GPU Load")
+                        .font(.subheadline)
+                        .bold()
+                    HStack {
+                        Text("\(Int(monitor.gpuLoad * 100))%")
+                            .font(.system(size: 11))
+                        ProgressView(value: monitor.gpuLoad)
+                            .progressViewStyle(LinearProgressViewStyle())
                     }
                 }
                 Divider()
@@ -61,26 +116,18 @@ struct ContentView: View {
                 }
                 Divider()
             }
-            
-            HStack {
-                Button("Settings...") {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                Spacer()
-                Button("Quit") {
-                    NSApplication.shared.terminate(nil)
-                }
             }
+            .padding()
+            .frame(width: 320)
         }
-        .padding()
-        .frame(width: 320)
     }
     
     func formatBytes(_ bytes: Double) -> String {
+        if bytes == 0 { return "0 KB" }
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useKB, .useMB, .useGB]
         formatter.countStyle = .memory
+        formatter.allowsNonnumericFormatting = false
         return formatter.string(fromByteCount: Int64(bytes))
     }
 }
@@ -89,17 +136,41 @@ struct SettingsView: View {
     @ObservedObject var monitor: SystemMonitor
     
     var body: some View {
-        Form {
-            Toggle("Show CPU Load", isOn: $monitor.showCPU)
-            Toggle("Show Memory Usage", isOn: $monitor.showMemory)
-            Toggle("Show Disk I/O", isOn: $monitor.showDisk)
-            Toggle("Show Network Speed", isOn: $monitor.showNetwork)
+        VStack(spacing: 12) {
+            GroupBox("Visibility") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("Show CPU Load", isOn: $monitor.showCPU)
+                    Toggle("Show GPU Load", isOn: $monitor.showGPU)
+                    Toggle("Show Memory Usage", isOn: $monitor.showMemory)
+                    Toggle("Show Disk I/O", isOn: $monitor.showDisk)
+                    Toggle("Show Network Speed", isOn: $monitor.showNetwork)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+            
+            GroupBox("Update Frequency") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Current Interval: \(Int(monitor.updateInterval)) sec")
+                    HStack {
+                        Text("1s").font(.caption).foregroundColor(.secondary)
+                        Slider(value: $monitor.updateInterval, in: 1...10, step: 1.0)
+                        Text("10s").font(.caption).foregroundColor(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
         }
         .padding()
-        .frame(width: 250, height: 180)
         .onChange(of: monitor.showCPU) { _ in monitor.saveSettings() }
+        .onChange(of: monitor.showGPU) { _ in monitor.saveSettings() }
         .onChange(of: monitor.showMemory) { _ in monitor.saveSettings() }
         .onChange(of: monitor.showDisk) { _ in monitor.saveSettings() }
         .onChange(of: monitor.showNetwork) { _ in monitor.saveSettings() }
+        .onChange(of: monitor.updateInterval) { _ in
+            monitor.saveSettings()
+            monitor.startMonitoring()
+        }
     }
 }

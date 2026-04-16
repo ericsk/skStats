@@ -32,3 +32,5 @@ Icon
 *.rbc
 .bundle
 .config
+
+build/

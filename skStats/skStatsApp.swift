@@ -5,13 +5,11 @@ struct skStatsApp: App {
     @StateObject private var monitor = SystemMonitor()
     
     var body: some Scene {
-        MenuBarExtra("skStats", systemImage: "chart.xyaxis.line") {
+        MenuBarExtra("skStats", systemImage: "gauge.medium") {
             ContentView(monitor: monitor)
         }
         .menuBarExtraStyle(.window)
         
-        Settings {
-            SettingsView(monitor: monitor)
-        }
+
     }
 }

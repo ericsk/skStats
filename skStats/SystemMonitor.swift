@@ -4,6 +4,7 @@ import Darwin
 
 class SystemMonitor: ObservableObject {
     @Published var cpuLoadPerCore: [Double] = []
+    @Published var gpuLoad: Double = 0.0
     @Published var memoryUsed: Double = 0.0
     @Published var memoryTotal: Double = 0.0
     @Published var diskReadRate: Double = 0.0
@@ -13,13 +14,17 @@ class SystemMonitor: ObservableObject {
     
     // Settings state
     @Published var showCPU: Bool = true
+    @Published var showGPU: Bool = true
     @Published var showMemory: Bool = true
     @Published var showDisk: Bool = true
     @Published var showNetwork: Bool = true
+    @Published var updateInterval: Double = 5.0
     
     private var timer: AnyCancellable?
     
     private var previousCPUTicks: [processor_cpu_load_info] = []
+    private var previousDiskBytesRead: UInt64 = 0
+    private var previousDiskBytesWritten: UInt64 = 0
     private var previousNetworkBytesIn: UInt64 = 0
     private var previousNetworkBytesOut: UInt64 = 0
     
@@ -31,31 +36,41 @@ class SystemMonitor: ObservableObject {
     
     func loadSettings() {
         showCPU = UserDefaults.standard.bool(forKey: "showCPU")
+        showGPU = UserDefaults.standard.bool(forKey: "showGPU")
         showMemory = UserDefaults.standard.bool(forKey: "showMemory")
         showDisk = UserDefaults.standard.bool(forKey: "showDisk")
         showNetwork = UserDefaults.standard.bool(forKey: "showNetwork")
         
+        if UserDefaults.standard.object(forKey: "updateInterval") != nil {
+            updateInterval = UserDefaults.standard.double(forKey: "updateInterval")
+        }
+        
         // Defaults if not set
         if UserDefaults.standard.object(forKey: "showCPU") == nil {
-            showCPU = true; showMemory = true; showDisk = true; showNetwork = true
+            showCPU = true; showGPU = true; showMemory = true; showDisk = true; showNetwork = true
         }
     }
     
     func saveSettings() {
         UserDefaults.standard.set(showCPU, forKey: "showCPU")
+        UserDefaults.standard.set(showGPU, forKey: "showGPU")
         UserDefaults.standard.set(showMemory, forKey: "showMemory")
         UserDefaults.standard.set(showDisk, forKey: "showDisk")
         UserDefaults.standard.set(showNetwork, forKey: "showNetwork")
+        UserDefaults.standard.set(updateInterval, forKey: "updateInterval")
     }
     
     func startMonitoring() {
-        timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect().sink { [weak self] _ in
+        timer?.cancel()
+        self.updateStats()
+        timer = Timer.publish(every: updateInterval, on: .main, in: .common).autoconnect().sink { [weak self] _ in
             self?.updateStats()
         }
     }
     
     func updateStats() {
         if showCPU { updateCPU() }
+        if showGPU { updateGPU() }
         if showMemory { updateMemory() }
         if showDisk { updateDisk() } // Stubbed or simplified due to IOKit bridging constraints
         if showNetwork { updateNetwork() }
@@ -123,10 +138,60 @@ class SystemMonitor: ObservableObject {
     }
     
     private func updateDisk() {
-        // Advanced disk IO monitoring requires IOKit which is not directly available in pure Swift without bridging.
-        // We simulate or leave a stub for the bare-bones native project architecture requirement.
-        self.diskReadRate = 0
-        self.diskWriteRate = 0
+        DispatchQueue.global(qos: .background).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/sbin/ioreg")
+            process.arguments = ["-c", "IOBlockStorageDriver", "-r", "-w", "0"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            
+            do {
+                try process.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let output = String(data: data, encoding: .utf8) {
+                    var totalRead: UInt64 = 0
+                    var totalWrite: UInt64 = 0
+                    
+                    do {
+                        let readRegex = try NSRegularExpression(pattern: "\"Bytes \\(Read\\)\"=(\\d+)")
+                        let writeRegex = try NSRegularExpression(pattern: "\"Bytes \\(Write\\)\"=(\\d+)")
+                        let nsRange = NSRange(output.startIndex..<output.endIndex, in: output)
+                        
+                        let readMatches = readRegex.matches(in: output, range: nsRange)
+                        for match in readMatches {
+                            if let r = Range(match.range(at: 1), in: output), let val = UInt64(output[r]) {
+                                totalRead += val
+                            }
+                        }
+                        
+                        let writeMatches = writeRegex.matches(in: output, range: nsRange)
+                        for match in writeMatches {
+                            if let r = Range(match.range(at: 1), in: output), let val = UInt64(output[r]) {
+                                totalWrite += val
+                            }
+                        }
+                    } catch {
+                        print("Regex error")
+                    }
+                    
+                    if totalRead > 0 && totalWrite > 0 {
+                        let readRate = self.previousDiskBytesRead > 0 ? (totalRead - self.previousDiskBytesRead) : 0
+                        let writeRate = self.previousDiskBytesWritten > 0 ? (totalWrite - self.previousDiskBytesWritten) : 0
+                        
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self = self else { return }
+                            self.diskReadRate = Double(readRate) / self.updateInterval
+                            self.diskWriteRate = Double(writeRate) / self.updateInterval
+                        }
+                        
+                        self.previousDiskBytesRead = totalRead
+                        self.previousDiskBytesWritten = totalWrite
+                    }
+                }
+            } catch {
+                print("Failed to get Disk stats")
+            }
+        }
     }
     
     private func updateNetwork() {
@@ -150,11 +215,42 @@ class SystemMonitor: ObservableObject {
         freeifaddrs(ifaddr)
         
         if previousNetworkBytesIn > 0 && previousNetworkBytesOut > 0 {
-            self.networkDownloadRate = Double(bytesIn - previousNetworkBytesIn)
-            self.networkUploadRate = Double(bytesOut - previousNetworkBytesOut)
+            self.networkDownloadRate = Double(bytesIn - previousNetworkBytesIn) / updateInterval
+            self.networkUploadRate = Double(bytesOut - previousNetworkBytesOut) / updateInterval
         }
         
         self.previousNetworkBytesIn = bytesIn
         self.previousNetworkBytesOut = bytesOut
+    }
+    
+    private func updateGPU() {
+        DispatchQueue.global(qos: .background).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/sbin/ioreg")
+            process.arguments = ["-l", "-w", "0"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            
+            do {
+                try process.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let output = String(data: data, encoding: .utf8) {
+                    if let range = output.range(of: "\"Device Utilization %\"=") {
+                        let substring = output[range.upperBound...]
+                        if let endRange = substring.range(of: ",") {
+                            if let load = Double(substring[..<endRange.lowerBound]) {
+                                DispatchQueue.main.async { self.gpuLoad = load / 100.0 }
+                            }
+                        } else if let endRange2 = substring.range(of: "}") {
+                            if let load = Double(substring[..<endRange2.lowerBound]) {
+                                DispatchQueue.main.async { self.gpuLoad = load / 100.0 }
+                            }
+                        }
+                    }
+                }
+            } catch {
+                print("Failed to get GPU usage")
+            }
+        }
     }
 }
