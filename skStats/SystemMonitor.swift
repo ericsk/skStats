@@ -148,6 +148,8 @@ class SystemMonitor: ObservableObject {
             do {
                 try process.run()
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                try? pipe.fileHandleForReading.close()
                 if let output = String(data: data, encoding: .utf8) {
                     var totalRead: UInt64 = 0
                     var totalWrite: UInt64 = 0
@@ -234,6 +236,8 @@ class SystemMonitor: ObservableObject {
             do {
                 try process.run()
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                try? pipe.fileHandleForReading.close()
                 if let output = String(data: data, encoding: .utf8) {
                     if let range = output.range(of: "\"Device Utilization %\"=") {
                         let substring = output[range.upperBound...]
