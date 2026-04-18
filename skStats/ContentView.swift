@@ -47,114 +47,138 @@ struct ContentView: View {
                 }
                 Divider()
             
-            if monitor.showCPU {
-                VStack(alignment: .leading) {
-                    Text("CPU Load")
-                        .font(.subheadline)
-                        .bold()
-                    let count = monitor.cpuLoadPerCore.count
-                    let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: min(8, max(1, count)))
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-                        ForEach(0..<count, id: \.self) { index in
-                            VStack(spacing: 2) {
-                                Text("\(Int(monitor.cpuLoadPerCore[index] * 100))%")
-                                    .font(.system(size: 9))
-                                ProgressView(value: monitor.cpuLoadPerCore[index])
-                                    .progressViewStyle(LinearProgressViewStyle())
-                            }
-                        }
-                    }
-                }
-                Divider()
-            }
-            
-            if monitor.showGPU {
-                VStack(alignment: .leading) {
-                    Text("GPU Load")
-                        .font(.subheadline)
-                        .bold()
-                    HStack {
-                        Text("\(Int(monitor.gpuLoad * 100))%")
-                            .font(.system(size: 11))
-                        ProgressView(value: monitor.gpuLoad)
-                            .progressViewStyle(LinearProgressViewStyle())
-                    }
-                }
-                Divider()
-            }
-            
-            if monitor.showMemory {
-                VStack(alignment: .leading) {
-                    Text("Memory")
-                        .font(.subheadline)
-                        .bold()
-                    Text(String(format: "Used: %.2f GB / %.2f GB", monitor.memoryUsed / 1_000_000_000, monitor.memoryTotal / 1_000_000_000))
-                        .font(.caption)
-                    ProgressView(value: monitor.memoryUsed, total: monitor.memoryTotal)
-                }
-                Divider()
-            }
-            
-            if monitor.showDisk {
-                VStack(alignment: .leading) {
-                    Text("Disk IO")
-                        .font(.subheadline)
-                        .bold()
-                    Text("R: \(formatBytes(monitor.diskReadRate))/s  W: \(formatBytes(monitor.diskWriteRate))/s")
-                        .font(.caption)
-                }
-                Divider()
-            }
-            
-            if monitor.showNetwork {
-                VStack(alignment: .leading) {
-                    Text("Network")
-                        .font(.subheadline)
-                        .bold()
-                    Text("↑ \(formatBytes(monitor.networkUploadRate))/s  ↓ \(formatBytes(monitor.networkDownloadRate))/s")
-                        .font(.caption)
-                }
-                Divider()
-            }
-            
-            if monitor.showTopCPU && !monitor.topCPU.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Top CPU Processes")
-                        .font(.subheadline)
-                        .bold()
-                    ForEach(monitor.topCPU) { process in
-                        HStack {
-                            Text(process.name).font(.caption).lineLimit(1).truncationMode(.tail)
-                            Spacer(minLength: 4)
-                            Text(process.value).font(.caption).foregroundColor(.secondary)
-                        }
-                    }
-                }
-                Divider()
-            }
-            
-            if monitor.showTopMemory && !monitor.topMemory.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Top Memory Processes")
-                        .font(.subheadline)
-                        .bold()
-                    ForEach(monitor.topMemory) { process in
-                        HStack {
-                            Text(process.name).font(.caption).lineLimit(1).truncationMode(.tail)
-                            Spacer(minLength: 4)
-                            Text(process.value).font(.caption).foregroundColor(.secondary)
-                        }
-                    }
-                }
-                Divider()
-            }
+                if monitor.showCPU { CPUDashboard(monitor: monitor) }
+                if monitor.showGPU { GPUDashboard(monitor: monitor) }
+                if monitor.showMemory { MemoryDashboard(monitor: monitor) }
+                if monitor.showDisk { DiskDashboard(monitor: monitor) }
+                if monitor.showNetwork { NetworkDashboard(monitor: monitor) }
+                if monitor.showTopCPU && !monitor.topCPU.isEmpty { TopCPUDashboard(monitor: monitor) }
+                if monitor.showTopMemory && !monitor.topMemory.isEmpty { TopMemoryDashboard(monitor: monitor) }
             }
             .padding()
             .frame(width: 320)
         }
     }
+}
+
+// MARK: - Subcomponents
+
+struct CPUDashboard: View {
+    @ObservedObject var monitor: SystemMonitor
     
-    func formatBytes(_ bytes: Double) -> String {
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("CPU Load").font(.subheadline).bold()
+            let count = monitor.cpuLoadPerCore.count
+            let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: min(8, max(1, count)))
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+                ForEach(0..<count, id: \.self) { index in
+                    VStack(spacing: 2) {
+                        Text("\(Int(monitor.cpuLoadPerCore[index] * 100))%").font(.system(size: 9))
+                        ProgressView(value: monitor.cpuLoadPerCore[index]).progressViewStyle(LinearProgressViewStyle())
+                    }
+                }
+            }
+        }
+        Divider()
+    }
+}
+
+struct GPUDashboard: View {
+    @ObservedObject var monitor: SystemMonitor
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("GPU Load").font(.subheadline).bold()
+            HStack {
+                Text("\(Int(monitor.gpuLoad * 100))%").font(.system(size: 11))
+                ProgressView(value: monitor.gpuLoad).progressViewStyle(LinearProgressViewStyle())
+            }
+        }
+        Divider()
+    }
+}
+
+struct MemoryDashboard: View {
+    @ObservedObject var monitor: SystemMonitor
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("Memory").font(.subheadline).bold()
+            Text(String(format: "Used: %.2f GB / %.2f GB", monitor.memoryUsed / 1_000_000_000, monitor.memoryTotal / 1_000_000_000))
+                .font(.caption)
+            ProgressView(value: monitor.memoryUsed, total: monitor.memoryTotal)
+        }
+        Divider()
+    }
+}
+
+struct DiskDashboard: View {
+    @ObservedObject var monitor: SystemMonitor
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("Disk IO").font(.subheadline).bold()
+            Text("R: \(FormatUtils.formatBytes(monitor.diskReadRate))/s  W: \(FormatUtils.formatBytes(monitor.diskWriteRate))/s")
+                .font(.caption)
+        }
+        Divider()
+    }
+}
+
+struct NetworkDashboard: View {
+    @ObservedObject var monitor: SystemMonitor
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("Network").font(.subheadline).bold()
+            Text("↑ \(FormatUtils.formatBytes(monitor.networkUploadRate))/s  ↓ \(FormatUtils.formatBytes(monitor.networkDownloadRate))/s")
+                .font(.caption)
+        }
+        Divider()
+    }
+}
+
+struct TopCPUDashboard: View {
+    @ObservedObject var monitor: SystemMonitor
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Top CPU Processes").font(.subheadline).bold()
+            ForEach(monitor.topCPU) { process in
+                HStack {
+                    Text(process.name).font(.caption).lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    Text(process.value).font(.caption).foregroundColor(.secondary)
+                }
+            }
+        }
+        Divider()
+    }
+}
+
+struct TopMemoryDashboard: View {
+    @ObservedObject var monitor: SystemMonitor
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Top Memory Processes").font(.subheadline).bold()
+            ForEach(monitor.topMemory) { process in
+                HStack {
+                    Text(process.name).font(.caption).lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    Text(process.value).font(.caption).foregroundColor(.secondary)
+                }
+            }
+        }
+        Divider()
+    }
+}
+
+// MARK: - Utilities
+
+struct FormatUtils {
+    static func formatBytes(_ bytes: Double) -> String {
         if bytes == 0 { return "0 KB" }
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useKB, .useMB, .useGB]
@@ -163,6 +187,8 @@ struct ContentView: View {
         return formatter.string(fromByteCount: Int64(bytes))
     }
 }
+
+// MARK: - Settings
 
 struct SettingsView: View {
     @ObservedObject var monitor: SystemMonitor

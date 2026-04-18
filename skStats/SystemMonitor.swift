@@ -154,61 +154,65 @@ class SystemMonitor: ObservableObject {
         }
     }
     
+    private func executeShellCommand(executable: String, arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            try? pipe.fileHandleForReading.close()
+            return String(data: data, encoding: .utf8)
+        } catch {
+            return nil
+        }
+    }
+    
     private func updateDisk() {
         DispatchQueue.global(qos: .background).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/sbin/ioreg")
-            process.arguments = ["-c", "IOBlockStorageDriver", "-r", "-w", "0"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
+            guard let output = self.executeShellCommand(executable: "/usr/sbin/ioreg", arguments: ["-c", "IOBlockStorageDriver", "-r", "-w", "0"]) else { return }
+            
+            var totalRead: UInt64 = 0
+            var totalWrite: UInt64 = 0
             
             do {
-                try process.run()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                try? pipe.fileHandleForReading.close()
-                if let output = String(data: data, encoding: .utf8) {
-                    var totalRead: UInt64 = 0
-                    var totalWrite: UInt64 = 0
-                    
-                    do {
-                        let readRegex = try NSRegularExpression(pattern: "\"Bytes \\(Read\\)\"=(\\d+)")
-                        let writeRegex = try NSRegularExpression(pattern: "\"Bytes \\(Write\\)\"=(\\d+)")
-                        let nsRange = NSRange(output.startIndex..<output.endIndex, in: output)
-                        
-                        let readMatches = readRegex.matches(in: output, range: nsRange)
-                        for match in readMatches {
-                            if let r = Range(match.range(at: 1), in: output), let val = UInt64(output[r]) {
-                                totalRead += val
-                            }
-                        }
-                        
-                        let writeMatches = writeRegex.matches(in: output, range: nsRange)
-                        for match in writeMatches {
-                            if let r = Range(match.range(at: 1), in: output), let val = UInt64(output[r]) {
-                                totalWrite += val
-                            }
-                        }
-                    } catch {
-                        print("Regex error")
+                let readRegex = try NSRegularExpression(pattern: "\"Bytes \\(Read\\)\"=(\\d+)")
+                let writeRegex = try NSRegularExpression(pattern: "\"Bytes \\(Write\\)\"=(\\d+)")
+                let nsRange = NSRange(output.startIndex..<output.endIndex, in: output)
+                
+                let readMatches = readRegex.matches(in: output, range: nsRange)
+                for match in readMatches {
+                    if let r = Range(match.range(at: 1), in: output), let val = UInt64(output[r]) {
+                        totalRead += val
                     }
-                    
-                    if totalRead > 0 && totalWrite > 0 {
-                        let readRate = self.previousDiskBytesRead > 0 ? (totalRead - self.previousDiskBytesRead) : 0
-                        let writeRate = self.previousDiskBytesWritten > 0 ? (totalWrite - self.previousDiskBytesWritten) : 0
-                        
-                        DispatchQueue.main.async { [weak self] in
-                            guard let self = self else { return }
-                            self.diskReadRate = Double(readRate) / self.updateInterval
-                            self.diskWriteRate = Double(writeRate) / self.updateInterval
-                        }
-                        
-                        self.previousDiskBytesRead = totalRead
-                        self.previousDiskBytesWritten = totalWrite
+                }
+                
+                let writeMatches = writeRegex.matches(in: output, range: nsRange)
+                for match in writeMatches {
+                    if let r = Range(match.range(at: 1), in: output), let val = UInt64(output[r]) {
+                        totalWrite += val
                     }
                 }
             } catch {
-                print("Failed to get Disk stats")
+                print("Regex error")
+            }
+            
+            if totalRead > 0 && totalWrite > 0 {
+                let readRate = self.previousDiskBytesRead > 0 ? (totalRead - self.previousDiskBytesRead) : 0
+                let writeRate = self.previousDiskBytesWritten > 0 ? (totalWrite - self.previousDiskBytesWritten) : 0
+                
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.diskReadRate = Double(readRate) / self.updateInterval
+                    self.diskWriteRate = Double(writeRate) / self.updateInterval
+                }
+                
+                self.previousDiskBytesRead = totalRead
+                self.previousDiskBytesWritten = totalWrite
             }
         }
     }
@@ -244,106 +248,62 @@ class SystemMonitor: ObservableObject {
     
     private func updateGPU() {
         DispatchQueue.global(qos: .background).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/sbin/ioreg")
-            process.arguments = ["-l", "-w", "0"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
+            guard let output = self.executeShellCommand(executable: "/usr/sbin/ioreg", arguments: ["-l", "-w", "0"]) else { return }
             
-            do {
-                try process.run()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                try? pipe.fileHandleForReading.close()
-                if let output = String(data: data, encoding: .utf8) {
-                    if let range = output.range(of: "\"Device Utilization %\"=") {
-                        let substring = output[range.upperBound...]
-                        if let endRange = substring.range(of: ",") {
-                            if let load = Double(substring[..<endRange.lowerBound]) {
-                                DispatchQueue.main.async { self.gpuLoad = load / 100.0 }
-                            }
-                        } else if let endRange2 = substring.range(of: "}") {
-                            if let load = Double(substring[..<endRange2.lowerBound]) {
-                                DispatchQueue.main.async { self.gpuLoad = load / 100.0 }
-                            }
-                        }
+            if let range = output.range(of: "\"Device Utilization %\"=") {
+                let substring = output[range.upperBound...]
+                if let endRange = substring.range(of: ",") {
+                    if let load = Double(substring[..<endRange.lowerBound]) {
+                        DispatchQueue.main.async { self.gpuLoad = load / 100.0 }
+                    }
+                } else if let endRange2 = substring.range(of: "}") {
+                    if let load = Double(substring[..<endRange2.lowerBound]) {
+                        DispatchQueue.main.async { self.gpuLoad = load / 100.0 }
                     }
                 }
-            } catch {
-                print("Failed to get GPU usage")
             }
         }
     }
     
     private func updateTopCPUProcesses() {
         DispatchQueue.global(qos: .background).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/ps")
-            process.arguments = ["-axc", "-o", "%cpu,comm", "-r"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
+            guard let output = self.executeShellCommand(executable: "/bin/ps", arguments: ["-axc", "-o", "%cpu,comm", "-r"]) else { return }
             
-            do {
-                try process.run()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                try? pipe.fileHandleForReading.close()
-                
-                if let output = String(data: data, encoding: .utf8) {
-                    let lines = output.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-                    var topList: [TopProcess] = []
-                    // Skip header line at 0
-                    for line in lines.dropFirst().prefix(3) {
-                        let trimmed = line.trimmingCharacters(in: .whitespaces)
-                        if let spaceIndex = trimmed.firstIndex(of: " ") {
-                            let value = String(trimmed[..<spaceIndex])
-                            let name = String(trimmed[spaceIndex...]).trimmingCharacters(in: .whitespaces)
-                            topList.append(TopProcess(name: name, value: value + "%"))
-                        }
-                    }
-                    DispatchQueue.main.async { self.topCPU = topList }
+            let lines = output.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            var topList: [TopProcess] = []
+            // Skip header line at 0
+            for line in lines.dropFirst().prefix(3) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if let spaceIndex = trimmed.firstIndex(of: " ") {
+                    let value = String(trimmed[..<spaceIndex])
+                    let name = String(trimmed[spaceIndex...]).trimmingCharacters(in: .whitespaces)
+                    topList.append(TopProcess(name: name, value: value + "%"))
                 }
-            } catch {
-                print("Failed to fetch top CPU")
             }
+            DispatchQueue.main.async { self.topCPU = topList }
         }
     }
     
     private func updateTopMemoryProcesses() {
         DispatchQueue.global(qos: .background).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/ps")
-            process.arguments = ["-axc", "-o", "rss,comm", "-m"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
+            guard let output = self.executeShellCommand(executable: "/bin/ps", arguments: ["-axc", "-o", "rss,comm", "-m"]) else { return }
             
-            do {
-                try process.run()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                try? pipe.fileHandleForReading.close()
-                
-                if let output = String(data: data, encoding: .utf8) {
-                    let lines = output.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-                    var topList: [TopProcess] = []
-                    // Skip header line at 0
-                    for line in lines.dropFirst().prefix(3) {
-                        let trimmed = line.trimmingCharacters(in: .whitespaces)
-                        if let spaceIndex = trimmed.firstIndex(of: " ") {
-                            let valueStr = String(trimmed[..<spaceIndex])
-                            let name = String(trimmed[spaceIndex...]).trimmingCharacters(in: .whitespaces)
-                            if let kb = Double(valueStr) {
-                                let mb = kb / 1024.0
-                                let formatValue = mb > 1000 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
-                                topList.append(TopProcess(name: name, value: formatValue))
-                            }
-                        }
+            let lines = output.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            var topList: [TopProcess] = []
+            // Skip header line at 0
+            for line in lines.dropFirst().prefix(3) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if let spaceIndex = trimmed.firstIndex(of: " ") {
+                    let valueStr = String(trimmed[..<spaceIndex])
+                    let name = String(trimmed[spaceIndex...]).trimmingCharacters(in: .whitespaces)
+                    if let kb = Double(valueStr) {
+                        let mb = kb / 1024.0
+                        let formatValue = mb > 1000 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
+                        topList.append(TopProcess(name: name, value: formatValue))
                     }
-                    DispatchQueue.main.async { self.topMemory = topList }
                 }
-            } catch {
-                print("Failed to fetch top Memory")
             }
+            DispatchQueue.main.async { self.topMemory = topList }
         }
     }
 }
