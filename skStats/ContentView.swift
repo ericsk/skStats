@@ -116,6 +116,38 @@ struct ContentView: View {
                 }
                 Divider()
             }
+            
+            if monitor.showTopCPU && !monitor.topCPU.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Top CPU Processes")
+                        .font(.subheadline)
+                        .bold()
+                    ForEach(monitor.topCPU) { process in
+                        HStack {
+                            Text(process.name).font(.caption).lineLimit(1).truncationMode(.tail)
+                            Spacer(minLength: 4)
+                            Text(process.value).font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                }
+                Divider()
+            }
+            
+            if monitor.showTopMemory && !monitor.topMemory.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Top Memory Processes")
+                        .font(.subheadline)
+                        .bold()
+                    ForEach(monitor.topMemory) { process in
+                        HStack {
+                            Text(process.name).font(.caption).lineLimit(1).truncationMode(.tail)
+                            Spacer(minLength: 4)
+                            Text(process.value).font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                }
+                Divider()
+            }
             }
             .padding()
             .frame(width: 320)
@@ -144,6 +176,8 @@ struct SettingsView: View {
                     Toggle("Show Memory Usage", isOn: $monitor.showMemory)
                     Toggle("Show Disk I/O", isOn: $monitor.showDisk)
                     Toggle("Show Network Speed", isOn: $monitor.showNetwork)
+                    Toggle("Show Top CPU Processes", isOn: $monitor.showTopCPU)
+                    Toggle("Show Top Memory Processes", isOn: $monitor.showTopMemory)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
@@ -168,6 +202,8 @@ struct SettingsView: View {
         .onChange(of: monitor.showMemory) { _ in monitor.saveSettings() }
         .onChange(of: monitor.showDisk) { _ in monitor.saveSettings() }
         .onChange(of: monitor.showNetwork) { _ in monitor.saveSettings() }
+        .onChange(of: monitor.showTopCPU) { _ in monitor.saveSettings() }
+        .onChange(of: monitor.showTopMemory) { _ in monitor.saveSettings() }
         .onChange(of: monitor.updateInterval) { _ in
             monitor.saveSettings()
             monitor.startMonitoring()

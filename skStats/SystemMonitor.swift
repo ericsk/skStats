@@ -2,6 +2,12 @@ import Foundation
 import Combine
 import Darwin
 
+struct TopProcess: Identifiable {
+    let id = UUID()
+    let name: String
+    let value: String
+}
+
 class SystemMonitor: ObservableObject {
     @Published var cpuLoadPerCore: [Double] = []
     @Published var gpuLoad: Double = 0.0
@@ -18,6 +24,11 @@ class SystemMonitor: ObservableObject {
     @Published var showMemory: Bool = true
     @Published var showDisk: Bool = true
     @Published var showNetwork: Bool = true
+    @Published var showTopCPU: Bool = true
+    @Published var showTopMemory: Bool = true
+    
+    @Published var topCPU: [TopProcess] = []
+    @Published var topMemory: [TopProcess] = []
     @Published var updateInterval: Double = 5.0
     
     private var timer: AnyCancellable?
@@ -40,6 +51,8 @@ class SystemMonitor: ObservableObject {
         showMemory = UserDefaults.standard.bool(forKey: "showMemory")
         showDisk = UserDefaults.standard.bool(forKey: "showDisk")
         showNetwork = UserDefaults.standard.bool(forKey: "showNetwork")
+        showTopCPU = UserDefaults.standard.bool(forKey: "showTopCPU")
+        showTopMemory = UserDefaults.standard.bool(forKey: "showTopMemory")
         
         if UserDefaults.standard.object(forKey: "updateInterval") != nil {
             updateInterval = UserDefaults.standard.double(forKey: "updateInterval")
@@ -47,7 +60,7 @@ class SystemMonitor: ObservableObject {
         
         // Defaults if not set
         if UserDefaults.standard.object(forKey: "showCPU") == nil {
-            showCPU = true; showGPU = true; showMemory = true; showDisk = true; showNetwork = true
+            showCPU = true; showGPU = true; showMemory = true; showDisk = true; showNetwork = true; showTopCPU = true; showTopMemory = true
         }
     }
     
@@ -57,6 +70,8 @@ class SystemMonitor: ObservableObject {
         UserDefaults.standard.set(showMemory, forKey: "showMemory")
         UserDefaults.standard.set(showDisk, forKey: "showDisk")
         UserDefaults.standard.set(showNetwork, forKey: "showNetwork")
+        UserDefaults.standard.set(showTopCPU, forKey: "showTopCPU")
+        UserDefaults.standard.set(showTopMemory, forKey: "showTopMemory")
         UserDefaults.standard.set(updateInterval, forKey: "updateInterval")
     }
     
@@ -74,6 +89,8 @@ class SystemMonitor: ObservableObject {
         if showMemory { updateMemory() }
         if showDisk { updateDisk() } // Stubbed or simplified due to IOKit bridging constraints
         if showNetwork { updateNetwork() }
+        if showTopCPU { updateTopCPUProcesses() }
+        if showTopMemory { updateTopMemoryProcesses() }
     }
     
     private func updateCPU() {
@@ -254,6 +271,78 @@ class SystemMonitor: ObservableObject {
                 }
             } catch {
                 print("Failed to get GPU usage")
+            }
+        }
+    }
+    
+    private func updateTopCPUProcesses() {
+        DispatchQueue.global(qos: .background).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/ps")
+            process.arguments = ["-axc", "-o", "%cpu,comm", "-r"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            
+            do {
+                try process.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                try? pipe.fileHandleForReading.close()
+                
+                if let output = String(data: data, encoding: .utf8) {
+                    let lines = output.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                    var topList: [TopProcess] = []
+                    // Skip header line at 0
+                    for line in lines.dropFirst().prefix(3) {
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        if let spaceIndex = trimmed.firstIndex(of: " ") {
+                            let value = String(trimmed[..<spaceIndex])
+                            let name = String(trimmed[spaceIndex...]).trimmingCharacters(in: .whitespaces)
+                            topList.append(TopProcess(name: name, value: value + "%"))
+                        }
+                    }
+                    DispatchQueue.main.async { self.topCPU = topList }
+                }
+            } catch {
+                print("Failed to fetch top CPU")
+            }
+        }
+    }
+    
+    private func updateTopMemoryProcesses() {
+        DispatchQueue.global(qos: .background).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/ps")
+            process.arguments = ["-axc", "-o", "rss,comm", "-m"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            
+            do {
+                try process.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                try? pipe.fileHandleForReading.close()
+                
+                if let output = String(data: data, encoding: .utf8) {
+                    let lines = output.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                    var topList: [TopProcess] = []
+                    // Skip header line at 0
+                    for line in lines.dropFirst().prefix(3) {
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        if let spaceIndex = trimmed.firstIndex(of: " ") {
+                            let valueStr = String(trimmed[..<spaceIndex])
+                            let name = String(trimmed[spaceIndex...]).trimmingCharacters(in: .whitespaces)
+                            if let kb = Double(valueStr) {
+                                let mb = kb / 1024.0
+                                let formatValue = mb > 1000 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
+                                topList.append(TopProcess(name: name, value: formatValue))
+                            }
+                        }
+                    }
+                    DispatchQueue.main.async { self.topMemory = topList }
+                }
+            } catch {
+                print("Failed to fetch top Memory")
             }
         }
     }
