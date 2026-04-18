@@ -4,6 +4,13 @@
 
 # skStats
 
+<p align="left">
+  <img src="https://img.shields.io/badge/macOS-13.0+-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS">
+  <img src="https://img.shields.io/badge/Swift-UI-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
+  <img src="https://img.shields.io/github/actions/workflow/status/ericsk/skStats/xcode-build.yml?style=for-the-badge&logo=githubactions&logoColor=white" alt="Build Status">
+  <img src="https://img.shields.io/github/license/ericsk/skStats?style=for-the-badge" alt="License">
+</p>
+
 **skStats** is a lightweight, elegant, and native macOS menu bar application designed to monitor your real-time system hardware and performance resources. Built cleanly with Swift and SwiftUI, it acts as your personal system supervisor without ever getting in your way.
 
 > **Note**: This project is completely built by Google Gemini.
