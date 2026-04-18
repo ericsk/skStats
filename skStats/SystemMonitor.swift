@@ -121,7 +121,7 @@ class SystemMonitor: ObservableObject {
                     let totalDiff = Double(user + system + idle + nice) - Double(prev.cpu_ticks.0 + prev.cpu_ticks.1 + prev.cpu_ticks.2 + prev.cpu_ticks.3)
                     let activeDiff = Double(user + system + nice) - Double(prev.cpu_ticks.0 + prev.cpu_ticks.1 + prev.cpu_ticks.3)
                     
-                    let load: Double = totalDiff > 0.0 ? (activeDiff / totalDiff) : 0.0
+                    let load: Double = totalDiff > 0.0 ? min(max(activeDiff / totalDiff, 0.0), 1.0) : 0.0
                     currentLoad.append(load)
                 } else {
                     currentLoad.append(0.0)
@@ -150,7 +150,7 @@ class SystemMonitor: ObservableObject {
             let active = Double(stats.active_count) * Double(vm_page_size)
             let wire = Double(stats.wire_count) * Double(vm_page_size)
             let compressed = Double(stats.compressor_page_count) * Double(vm_page_size)
-            self.memoryUsed = active + wire + compressed
+            self.memoryUsed = min(active + wire + compressed, self.memoryTotal)
         }
     }
     
@@ -202,8 +202,8 @@ class SystemMonitor: ObservableObject {
             }
             
             if totalRead > 0 && totalWrite > 0 {
-                let readRate = self.previousDiskBytesRead > 0 ? (totalRead - self.previousDiskBytesRead) : 0
-                let writeRate = self.previousDiskBytesWritten > 0 ? (totalWrite - self.previousDiskBytesWritten) : 0
+                let readRate = totalRead >= self.previousDiskBytesRead ? (totalRead - self.previousDiskBytesRead) : 0
+                let writeRate = totalWrite >= self.previousDiskBytesWritten ? (totalWrite - self.previousDiskBytesWritten) : 0
                 
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
@@ -238,8 +238,8 @@ class SystemMonitor: ObservableObject {
         freeifaddrs(ifaddr)
         
         if previousNetworkBytesIn > 0 && previousNetworkBytesOut > 0 {
-            self.networkDownloadRate = Double(bytesIn - previousNetworkBytesIn) / updateInterval
-            self.networkUploadRate = Double(bytesOut - previousNetworkBytesOut) / updateInterval
+            self.networkDownloadRate = bytesIn >= previousNetworkBytesIn ? Double(bytesIn - previousNetworkBytesIn) / updateInterval : 0
+            self.networkUploadRate = bytesOut >= previousNetworkBytesOut ? Double(bytesOut - previousNetworkBytesOut) / updateInterval : 0
         }
         
         self.previousNetworkBytesIn = bytesIn
@@ -254,11 +254,11 @@ class SystemMonitor: ObservableObject {
                 let substring = output[range.upperBound...]
                 if let endRange = substring.range(of: ",") {
                     if let load = Double(substring[..<endRange.lowerBound]) {
-                        DispatchQueue.main.async { self.gpuLoad = load / 100.0 }
+                        DispatchQueue.main.async { self.gpuLoad = min(max(load / 100.0, 0.0), 1.0) }
                     }
                 } else if let endRange2 = substring.range(of: "}") {
                     if let load = Double(substring[..<endRange2.lowerBound]) {
-                        DispatchQueue.main.async { self.gpuLoad = load / 100.0 }
+                        DispatchQueue.main.async { self.gpuLoad = min(max(load / 100.0, 0.0), 1.0) }
                     }
                 }
             }
