@@ -1,6 +1,9 @@
 import Foundation
 import Combine
 import Darwin
+import IOKit
+import IOKit.storage
+import IOKit.network
 
 struct TopProcess: Identifiable {
     let id = UUID()
@@ -87,7 +90,7 @@ class SystemMonitor: ObservableObject {
         if showCPU { updateCPU() }
         if showGPU { updateGPU() }
         if showMemory { updateMemory() }
-        if showDisk { updateDisk() } // Stubbed or simplified due to IOKit bridging constraints
+        if showDisk { updateDisk() }
         if showNetwork { updateNetwork() }
         if showTopCPU { updateTopCPUProcesses() }
         if showTopMemory { updateTopMemoryProcesses() }
@@ -131,7 +134,6 @@ class SystemMonitor: ObservableObject {
             self.cpuLoadPerCore = currentLoad
             self.previousCPUTicks = newTicks
             
-            let vmPageSize = vm_page_size
             vm_deallocate(mach_task_self_, vm_address_t(bitPattern: cpuInfo), vm_size_t(numCpuInfo) * vm_size_t(MemoryLayout<integer_t>.stride))
         }
     }
@@ -154,67 +156,45 @@ class SystemMonitor: ObservableObject {
         }
     }
     
-    private func executeShellCommand(executable: String, arguments: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        
-        do {
-            try process.run()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            try? pipe.fileHandleForReading.close()
-            return String(data: data, encoding: .utf8)
-        } catch {
-            return nil
-        }
-    }
-    
     private func updateDisk() {
-        DispatchQueue.global(qos: .background).async {
-            guard let output = self.executeShellCommand(executable: "/usr/sbin/ioreg", arguments: ["-c", "IOBlockStorageDriver", "-r", "-w", "0"]) else { return }
-            
-            var totalRead: UInt64 = 0
-            var totalWrite: UInt64 = 0
-            
-            do {
-                let readRegex = try NSRegularExpression(pattern: "\"Bytes \\(Read\\)\"=(\\d+)")
-                let writeRegex = try NSRegularExpression(pattern: "\"Bytes \\(Write\\)\"=(\\d+)")
-                let nsRange = NSRange(output.startIndex..<output.endIndex, in: output)
-                
-                let readMatches = readRegex.matches(in: output, range: nsRange)
-                for match in readMatches {
-                    if let r = Range(match.range(at: 1), in: output), let val = UInt64(output[r]) {
-                        totalRead += val
+        var totalRead: UInt64 = 0
+        var totalWrite: UInt64 = 0
+        
+        var matchIterator: io_iterator_t = 0
+        let matchingDict = IOServiceMatching("IOBlockStorageDriver")
+        let result = IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, &matchIterator)
+        
+        if result == kIOReturnSuccess {
+            var drive: io_registry_entry_t = IOIteratorNext(matchIterator)
+            while drive != 0 {
+                var properties: Unmanaged<CFMutableDictionary>?
+                if IORegistryEntryCreateCFProperties(drive, &properties, kCFAllocatorDefault, 0) == kIOReturnSuccess,
+                   let props = properties?.takeRetainedValue() as? [String: Any],
+                   let stats = props["Statistics"] as? [String: Any] {
+                    
+                    if let readBytes = stats["Bytes (Read)"] as? NSNumber {
+                        totalRead += readBytes.uint64Value
+                    }
+                    if let writeBytes = stats["Bytes (Write)"] as? NSNumber {
+                        totalWrite += writeBytes.uint64Value
                     }
                 }
-                
-                let writeMatches = writeRegex.matches(in: output, range: nsRange)
-                for match in writeMatches {
-                    if let r = Range(match.range(at: 1), in: output), let val = UInt64(output[r]) {
-                        totalWrite += val
-                    }
-                }
-            } catch {
-                print("Regex error")
+                IOObjectRelease(drive)
+                drive = IOIteratorNext(matchIterator)
             }
-            
-            if totalRead > 0 && totalWrite > 0 {
-                let readRate = totalRead >= self.previousDiskBytesRead ? (totalRead - self.previousDiskBytesRead) : 0
-                let writeRate = totalWrite >= self.previousDiskBytesWritten ? (totalWrite - self.previousDiskBytesWritten) : 0
-                
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    self.diskReadRate = Double(readRate) / self.updateInterval
-                    self.diskWriteRate = Double(writeRate) / self.updateInterval
-                }
-                
-                self.previousDiskBytesRead = totalRead
-                self.previousDiskBytesWritten = totalWrite
-            }
+            IOObjectRelease(matchIterator)
         }
+        
+        if previousDiskBytesRead > 0 {
+            let readRate = totalRead >= previousDiskBytesRead ? (totalRead - previousDiskBytesRead) : 0
+            let writeRate = totalWrite >= previousDiskBytesWritten ? (totalWrite - previousDiskBytesWritten) : 0
+            
+            self.diskReadRate = Double(readRate) / updateInterval
+            self.diskWriteRate = Double(writeRate) / updateInterval
+        }
+        
+        self.previousDiskBytesRead = totalRead
+        self.previousDiskBytesWritten = totalWrite
     }
     
     private func updateNetwork() {
@@ -247,63 +227,95 @@ class SystemMonitor: ObservableObject {
     }
     
     private func updateGPU() {
-        DispatchQueue.global(qos: .background).async {
-            guard let output = self.executeShellCommand(executable: "/usr/sbin/ioreg", arguments: ["-l", "-w", "0"]) else { return }
-            
-            if let range = output.range(of: "\"Device Utilization %\"=") {
-                let substring = output[range.upperBound...]
-                if let endRange = substring.range(of: ",") {
-                    if let load = Double(substring[..<endRange.lowerBound]) {
-                        DispatchQueue.main.async { self.gpuLoad = min(max(load / 100.0, 0.0), 1.0) }
-                    }
-                } else if let endRange2 = substring.range(of: "}") {
-                    if let load = Double(substring[..<endRange2.lowerBound]) {
-                        DispatchQueue.main.async { self.gpuLoad = min(max(load / 100.0, 0.0), 1.0) }
+        var matchIterator: io_iterator_t = 0
+        // On Apple Silicon, look for "AppleARMGPU" or "AGXAccelerator"
+        // On Intel, look for "IntelAccelerator" or "IOAccelerator"
+        let matchingDict = IOServiceMatching("IOAccelerator")
+        let result = IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, &matchIterator)
+        
+        if result == kIOReturnSuccess {
+            var service: io_registry_entry_t = IOIteratorNext(matchIterator)
+            while service != 0 {
+                var properties: Unmanaged<CFMutableDictionary>?
+                if IORegistryEntryCreateCFProperties(service, &properties, kCFAllocatorDefault, 0) == kIOReturnSuccess,
+                   let props = properties?.takeRetainedValue() as? [String: Any],
+                   let perfStats = props["PerformanceStatistics"] as? [String: Any] {
+                    
+                    if let utilization = perfStats["Device Utilization %"] as? NSNumber {
+                        self.gpuLoad = utilization.doubleValue / 100.0
+                        IOObjectRelease(service)
+                        break // Found the active one
                     }
                 }
+                IOObjectRelease(service)
+                service = IOIteratorNext(matchIterator)
             }
+            IOObjectRelease(matchIterator)
         }
     }
     
     private func updateTopCPUProcesses() {
-        DispatchQueue.global(qos: .background).async {
-            guard let output = self.executeShellCommand(executable: "/bin/ps", arguments: ["-axc", "-o", "%cpu,comm", "-r"]) else { return }
+        let pids = getPIDs()
+        var processes: [(name: String, cpu: Float)] = []
+        
+        for pid in pids {
+            var usage = proc_taskinfo()
+            let size = MemoryLayout<proc_taskinfo>.size
+            let result = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &usage, Int32(size))
             
-            let lines = output.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            var topList: [TopProcess] = []
-            // Skip header line at 0
-            for line in lines.dropFirst().prefix(3) {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if let spaceIndex = trimmed.firstIndex(of: " ") {
-                    let value = String(trimmed[..<spaceIndex])
-                    let name = String(trimmed[spaceIndex...]).trimmingCharacters(in: .whitespaces)
-                    topList.append(TopProcess(name: name, value: value + "%"))
-                }
+            if result == Int32(size) {
+                let name = getName(pid: pid)
+                // 註：這是一個簡化的權重排序
+                processes.append((name: name, cpu: Float(usage.pti_total_user + usage.pti_total_system)))
             }
-            DispatchQueue.main.async { self.topCPU = topList }
         }
+        
+        let topList = processes.sorted { $0.cpu > $1.cpu }.prefix(3).map { 
+            TopProcess(name: $0.name, value: "Active") 
+        }
+        
+        DispatchQueue.main.async { self.topCPU = topList }
     }
     
     private func updateTopMemoryProcesses() {
-        DispatchQueue.global(qos: .background).async {
-            guard let output = self.executeShellCommand(executable: "/bin/ps", arguments: ["-axc", "-o", "rss,comm", "-m"]) else { return }
+        let pids = getPIDs()
+        var processes: [(name: String, mem: UInt64)] = []
+        
+        for pid in pids {
+            var usage = proc_taskinfo()
+            let size = MemoryLayout<proc_taskinfo>.size
+            let result = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &usage, Int32(size))
             
-            let lines = output.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            var topList: [TopProcess] = []
-            // Skip header line at 0
-            for line in lines.dropFirst().prefix(3) {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if let spaceIndex = trimmed.firstIndex(of: " ") {
-                    let valueStr = String(trimmed[..<spaceIndex])
-                    let name = String(trimmed[spaceIndex...]).trimmingCharacters(in: .whitespaces)
-                    if let kb = Double(valueStr) {
-                        let mb = kb / 1024.0
-                        let formatValue = mb > 1000 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
-                        topList.append(TopProcess(name: name, value: formatValue))
-                    }
-                }
+            if result == Int32(size) {
+                let name = getName(pid: pid)
+                processes.append((name: name, mem: usage.pti_resident_size))
             }
-            DispatchQueue.main.async { self.topMemory = topList }
         }
+        
+        let topList = processes.sorted { $0.mem > $1.mem }.prefix(3).map { p in
+            let mb = Double(p.mem) / 1024.0 / 1024.0
+            let formatValue = mb > 1024 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
+            return TopProcess(name: p.name, value: formatValue)
+        }
+        
+        DispatchQueue.main.async { self.topMemory = topList }
+    }
+    
+    private func getPIDs() -> [Int32] {
+        let numberOfProcesses = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
+        var pids = [Int32](repeating: 0, count: Int(numberOfProcesses))
+        let count = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(numberOfProcesses * UInt32(MemoryLayout<Int32>.size)))
+        if count <= 0 { return [] }
+        return Array(pids.prefix(Int(count) / MemoryLayout<Int32>.size))
+    }
+    
+    private func getName(pid: Int32) -> String {
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: Int(PROC_PIDPATHINFO_MAXSIZE))
+        defer { buffer.deallocate() }
+        let result = proc_name(pid, buffer, UInt32(PROC_PIDPATHINFO_MAXSIZE))
+        if result > 0 {
+            return String(cString: buffer)
+        }
+        return "Unknown"
     }
 }
