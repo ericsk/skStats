@@ -162,7 +162,7 @@ class SystemMonitor: ObservableObject {
         
         var matchIterator: io_iterator_t = 0
         let matchingDict = IOServiceMatching("IOBlockStorageDriver")
-        let result = IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, &matchIterator)
+        let result = IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &matchIterator)
         
         if result == kIOReturnSuccess {
             var drive: io_registry_entry_t = IOIteratorNext(matchIterator)
@@ -231,7 +231,7 @@ class SystemMonitor: ObservableObject {
         // On Apple Silicon, look for "AppleARMGPU" or "AGXAccelerator"
         // On Intel, look for "IntelAccelerator" or "IOAccelerator"
         let matchingDict = IOServiceMatching("IOAccelerator")
-        let result = IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, &matchIterator)
+        let result = IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &matchIterator)
         
         if result == kIOReturnSuccess {
             var service: io_registry_entry_t = IOIteratorNext(matchIterator)
@@ -304,15 +304,17 @@ class SystemMonitor: ObservableObject {
     private func getPIDs() -> [Int32] {
         let numberOfProcesses = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
         var pids = [Int32](repeating: 0, count: Int(numberOfProcesses))
-        let count = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(numberOfProcesses * UInt32(MemoryLayout<Int32>.size)))
+        let bufferSize = Int32(numberOfProcesses) * Int32(MemoryLayout<Int32>.size)
+        let count = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, bufferSize)
         if count <= 0 { return [] }
         return Array(pids.prefix(Int(count) / MemoryLayout<Int32>.size))
     }
     
     private func getName(pid: Int32) -> String {
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: Int(PROC_PIDPATHINFO_MAXSIZE))
+        let maxPath = 4096 // PROC_PIDPATHINFO_MAXSIZE
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: maxPath)
         defer { buffer.deallocate() }
-        let result = proc_name(pid, buffer, UInt32(PROC_PIDPATHINFO_MAXSIZE))
+        let result = proc_name(pid, buffer, UInt32(maxPath))
         if result > 0 {
             return String(cString: buffer)
         }
