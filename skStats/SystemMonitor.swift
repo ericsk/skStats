@@ -5,6 +5,15 @@ import IOKit
 import IOKit.storage
 import IOKit.network
 
+enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
+    case cpu = "CPU"
+    case gpu = "GPU"
+    case memory = "Memory"
+    case network = "Network"
+    case disk = "Disk"
+    var id: String { self.rawValue }
+}
+
 struct TopProcess: Identifiable {
     let id = UUID()
     let name: String
@@ -13,6 +22,10 @@ struct TopProcess: Identifiable {
 
 class SystemMonitor: ObservableObject {
     @Published var cpuLoadPerCore: [Double] = []
+    var totalCPULoad: Double {
+        guard !cpuLoadPerCore.isEmpty else { return 0.0 }
+        return cpuLoadPerCore.reduce(0, +) / Double(cpuLoadPerCore.count)
+    }
     @Published var gpuLoad: Double = 0.0
     @Published var memoryUsed: Double = 0.0
     @Published var memoryTotal: Double = 0.0
@@ -29,6 +42,8 @@ class SystemMonitor: ObservableObject {
     @Published var showNetwork: Bool = true
     @Published var showTopCPU: Bool = true
     @Published var showTopMemory: Bool = true
+    @Published var showMenuBarMode: MenuBarDisplayMode = .cpu
+    @Published var showMenuBarText: Bool = true
     
     @Published var topCPU: [TopProcess] = []
     @Published var topMemory: [TopProcess] = []
@@ -57,6 +72,17 @@ class SystemMonitor: ObservableObject {
         showTopCPU = UserDefaults.standard.bool(forKey: "showTopCPU")
         showTopMemory = UserDefaults.standard.bool(forKey: "showTopMemory")
         
+        if let modeStr = UserDefaults.standard.string(forKey: "showMenuBarMode"),
+           let mode = MenuBarDisplayMode(rawValue: modeStr) {
+            showMenuBarMode = mode
+        }
+        
+        if UserDefaults.standard.object(forKey: "showMenuBarText") != nil {
+            showMenuBarText = UserDefaults.standard.bool(forKey: "showMenuBarText")
+        } else {
+            showMenuBarText = true // Default
+        }
+        
         if UserDefaults.standard.object(forKey: "updateInterval") != nil {
             updateInterval = UserDefaults.standard.double(forKey: "updateInterval")
         }
@@ -75,6 +101,8 @@ class SystemMonitor: ObservableObject {
         UserDefaults.standard.set(showNetwork, forKey: "showNetwork")
         UserDefaults.standard.set(showTopCPU, forKey: "showTopCPU")
         UserDefaults.standard.set(showTopMemory, forKey: "showTopMemory")
+        UserDefaults.standard.set(showMenuBarMode.rawValue, forKey: "showMenuBarMode")
+        UserDefaults.standard.set(showMenuBarText, forKey: "showMenuBarText")
         UserDefaults.standard.set(updateInterval, forKey: "updateInterval")
     }
     

@@ -195,6 +195,28 @@ struct SettingsView: View {
     
     var body: some View {
         VStack(spacing: 12) {
+            GroupBox("MenuBar Display") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Show dynamic text", isOn: $monitor.showMenuBarText)
+                        .fontWeight(.medium)
+                    
+                    HStack {
+                        Text("Display Stat:")
+                            .foregroundColor(monitor.showMenuBarText ? .primary : .secondary)
+                        Spacer()
+                        Picker("", selection: $monitor.showMenuBarMode) {
+                            ForEach(MenuBarDisplayMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .disabled(!monitor.showMenuBarText)
+                    }
+                    .padding(.leading, 20) // Indent the sub-option
+                }
+                .padding(.vertical, 6)
+            }
+            
             GroupBox("Visibility") {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Show CPU Load", isOn: $monitor.showCPU)
@@ -230,6 +252,8 @@ struct SettingsView: View {
         .onChange(of: monitor.showNetwork) { _ in monitor.saveSettings() }
         .onChange(of: monitor.showTopCPU) { _ in monitor.saveSettings() }
         .onChange(of: monitor.showTopMemory) { _ in monitor.saveSettings() }
+        .onChange(of: monitor.showMenuBarMode) { _ in monitor.saveSettings() }
+        .onChange(of: monitor.showMenuBarText) { _ in monitor.saveSettings() }
         .onChange(of: monitor.updateInterval) { _ in
             monitor.saveSettings()
             monitor.startMonitoring()
