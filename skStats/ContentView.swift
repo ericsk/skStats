@@ -5,60 +5,89 @@ struct ContentView: View {
     @State private var isShowingSettings = false
     
     var body: some View {
-        if isShowingSettings {
-            VStack {
-                HStack {
-                    Button(action: {
-                        isShowingSettings = false
-                    }) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 14))
-                    }
-                    .buttonStyle(.plain)
-                    Text("Settings").font(.headline)
-                    Spacer()
+        VStack(spacing: 0) {
+            if isShowingSettings {
+                settingsHeader
+                SettingsView(monitor: monitor)
+                    .transition(.move(edge: .trailing))
+            } else {
+                mainHeader
+                VStack(alignment: .leading, spacing: 14) {
+                    if monitor.showCPU { CPUDashboard(monitor: monitor) }
+                    if monitor.showGPU { GPUDashboard(monitor: monitor) }
+                    if monitor.showMemory { MemoryDashboard(monitor: monitor) }
+                    if monitor.showDisk { DiskDashboard(monitor: monitor) }
+                    if monitor.showNetwork { NetworkDashboard(monitor: monitor) }
+                    if monitor.showTopCPU && !monitor.topCPU.isEmpty { TopCPUDashboard(monitor: monitor) }
+                    if monitor.showTopMemory && !monitor.topMemory.isEmpty { TopMemoryDashboard(monitor: monitor) }
                 }
                 .padding(.horizontal)
-                .padding(.top, 10)
-                
-                SettingsView(monitor: monitor)
+                .padding(.bottom, 16)
+                .transition(.move(edge: .leading))
             }
-            .frame(width: 320)
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 12) {
-                    Text("skStats").font(.headline)
-                    Spacer()
-                    Button(action: {
-                        isShowingSettings = true
-                    }) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 14))
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Button(action: {
-                        NSApplication.shared.terminate(nil)
-                    }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14))
-                    }
-                    .buttonStyle(.plain)
-                }
-                Divider()
-            
-                if monitor.showCPU { CPUDashboard(monitor: monitor) }
-                if monitor.showGPU { GPUDashboard(monitor: monitor) }
-                if monitor.showMemory { MemoryDashboard(monitor: monitor) }
-                if monitor.showDisk { DiskDashboard(monitor: monitor) }
-                if monitor.showNetwork { NetworkDashboard(monitor: monitor) }
-                if monitor.showTopCPU && !monitor.topCPU.isEmpty { TopCPUDashboard(monitor: monitor) }
-                if monitor.showTopMemory && !monitor.topMemory.isEmpty { TopMemoryDashboard(monitor: monitor) }
-            }
-            .padding()
-            .frame(width: 320)
         }
+        .frame(width: 320)
+        .background(VisualEffectView(material: .menu, blendingMode: .behindWindow))
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isShowingSettings)
     }
+    
+    private var mainHeader: some View {
+        HStack {
+            Text("skStats")
+                .font(.system(.headline, design: .rounded))
+                .foregroundColor(.accentColor)
+            Spacer()
+            Button { isShowingSettings = true } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            
+            Button { NSApplication.shared.terminate(nil) } label: {
+                Image(systemName: "power")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+    }
+    
+    private var settingsHeader: some View {
+        HStack {
+            Button { isShowingSettings = false } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                    Text("Back")
+                }
+                .font(.system(size: 13, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            Text("Settings")
+                .font(.system(.headline, design: .rounded))
+        }
+        .padding(.horizontal)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+    }
+}
+
+// 輔助：背景模糊效果
+struct VisualEffectView: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+    let blendingMode: NSVisualEffectView.BlendingMode
+    
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 // MARK: - Subcomponents
@@ -67,20 +96,29 @@ struct CPUDashboard: View {
     @ObservedObject var monitor: SystemMonitor
     
     var body: some View {
-        VStack(alignment: .leading) {
-            Text("CPU Load").font(.subheadline).bold()
+        DashboardSection(title: "CPU Load", icon: "cpu") {
             let count = monitor.cpuLoadPerCore.count
-            let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: min(8, max(1, count)))
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+            let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+            LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(0..<count, id: \.self) { index in
-                    VStack(spacing: 2) {
-                        Text("\(Int(monitor.cpuLoadPerCore[index] * 100))%").font(.system(size: 9))
-                        ProgressView(value: monitor.cpuLoadPerCore[index]).progressViewStyle(LinearProgressViewStyle())
+                    VStack(spacing: 4) {
+                        Gauge(value: monitor.cpuLoadPerCore[index]) {
+                            Text("")
+                        } currentValueLabel: {
+                            Text("\(Int(monitor.cpuLoadPerCore[index] * 100))")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .gaugeStyle(.accessoryCircularCapacity)
+                        .scaleEffect(0.7)
+                        .frame(height: 30)
+                        
+                        Text("Core \(index)")
+                            .font(.system(size: 8))
+                            .foregroundColor(.secondary)
                     }
                 }
             }
         }
-        Divider()
     }
 }
 
@@ -88,14 +126,17 @@ struct GPUDashboard: View {
     @ObservedObject var monitor: SystemMonitor
     
     var body: some View {
-        VStack(alignment: .leading) {
-            Text("GPU Load").font(.subheadline).bold()
+        DashboardSection(title: "GPU Load", icon: "cpu.fill") {
             HStack {
-                Text("\(Int(monitor.gpuLoad * 100))%").font(.system(size: 11))
-                ProgressView(value: monitor.gpuLoad).progressViewStyle(LinearProgressViewStyle())
+                Gauge(value: monitor.gpuLoad) {
+                    Text("GPU")
+                } currentValueLabel: {
+                    Text("\(Int(monitor.gpuLoad * 100))%")
+                }
+                .gaugeStyle(.accessoryLinearCapacity)
+                .tint(.purple)
             }
         }
-        Divider()
     }
 }
 
@@ -103,13 +144,21 @@ struct MemoryDashboard: View {
     @ObservedObject var monitor: SystemMonitor
     
     var body: some View {
-        VStack(alignment: .leading) {
-            Text("Memory").font(.subheadline).bold()
-            Text(String(format: "Used: %.2f GB / %.2f GB", monitor.memoryUsed / 1_000_000_000, monitor.memoryTotal / 1_000_000_000))
-                .font(.caption)
-            ProgressView(value: monitor.memoryUsed, total: monitor.memoryTotal)
+        DashboardSection(title: "Memory", icon: "memorychip") {
+            VStack(alignment: .leading, spacing: 4) {
+                Gauge(value: monitor.memoryUsed, in: 0...monitor.memoryTotal) {
+                    Text("Memory")
+                } currentValueLabel: {
+                    Text(String(format: "%.1f GB / %.1f GB", monitor.memoryUsed / 1_000_000_000, monitor.memoryTotal / 1_000_000_000))
+                }
+                .gaugeStyle(.accessoryLinearCapacity)
+                .tint(.blue)
+                
+                Text(String(format: "Usage: %.0f%%", (monitor.memoryUsed / monitor.memoryTotal) * 100))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
         }
-        Divider()
     }
 }
 
@@ -117,12 +166,12 @@ struct DiskDashboard: View {
     @ObservedObject var monitor: SystemMonitor
     
     var body: some View {
-        VStack(alignment: .leading) {
-            Text("Disk IO").font(.subheadline).bold()
-            Text("R: \(FormatUtils.formatBytes(monitor.diskReadRate))/s  W: \(FormatUtils.formatBytes(monitor.diskWriteRate))/s")
-                .font(.caption)
+        DashboardSection(title: "Disk I/O", icon: "externaldrive") {
+            HStack(spacing: 20) {
+                StatView(label: "Read", value: FormatUtils.formatBytes(monitor.diskReadRate) + "/s", color: .green)
+                StatView(label: "Write", value: FormatUtils.formatBytes(monitor.diskWriteRate) + "/s", color: .orange)
+            }
         }
-        Divider()
     }
 }
 
@@ -130,12 +179,12 @@ struct NetworkDashboard: View {
     @ObservedObject var monitor: SystemMonitor
     
     var body: some View {
-        VStack(alignment: .leading) {
-            Text("Network").font(.subheadline).bold()
-            Text("↑ \(FormatUtils.formatBytes(monitor.networkUploadRate))/s  ↓ \(FormatUtils.formatBytes(monitor.networkDownloadRate))/s")
-                .font(.caption)
+        DashboardSection(title: "Network", icon: "network") {
+            HStack(spacing: 20) {
+                StatView(label: "Down", value: FormatUtils.formatBytes(monitor.networkDownloadRate) + "/s", icon: "arrow.down", color: .blue)
+                StatView(label: "Up", value: FormatUtils.formatBytes(monitor.networkUploadRate) + "/s", icon: "arrow.up", color: .red)
+            }
         }
-        Divider()
     }
 }
 
@@ -143,17 +192,13 @@ struct TopCPUDashboard: View {
     @ObservedObject var monitor: SystemMonitor
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Top CPU Processes").font(.subheadline).bold()
-            ForEach(monitor.topCPU) { process in
-                HStack {
-                    Text(process.name).font(.caption).lineLimit(1).truncationMode(.tail)
-                    Spacer(minLength: 4)
-                    Text(process.value).font(.caption).foregroundColor(.secondary)
+        DashboardSection(title: "Top CPU", icon: "list.bullet.rectangle") {
+            VStack(spacing: 6) {
+                ForEach(monitor.topCPU) { process in
+                    ProcessRow(name: process.name, value: process.value)
                 }
             }
         }
-        Divider()
     }
 }
 
@@ -161,17 +206,85 @@ struct TopMemoryDashboard: View {
     @ObservedObject var monitor: SystemMonitor
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Top Memory Processes").font(.subheadline).bold()
-            ForEach(monitor.topMemory) { process in
-                HStack {
-                    Text(process.name).font(.caption).lineLimit(1).truncationMode(.tail)
-                    Spacer(minLength: 4)
-                    Text(process.value).font(.caption).foregroundColor(.secondary)
+        DashboardSection(title: "Top Memory", icon: "list.bullet.indent") {
+            VStack(spacing: 6) {
+                ForEach(monitor.topMemory) { process in
+                    ProcessRow(name: process.name, value: process.value)
                 }
             }
         }
-        Divider()
+    }
+}
+
+// MARK: - UI Helpers
+
+struct DashboardSection<Content: View>: View {
+    let title: String
+    let icon: String
+    let content: Content
+    
+    init(title: String, icon: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.icon = icon
+        self.content = content()
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .foregroundColor(.accentColor)
+                Text(title)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .textCase(.uppercase)
+                    .foregroundColor(.secondary)
+            }
+            content
+            Divider()
+                .padding(.top, 4)
+        }
+    }
+}
+
+struct StatView: View {
+    let label: String
+    let value: String
+    var icon: String? = nil
+    let color: Color
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                if let icon = icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 8))
+                }
+                Text(label)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary)
+            }
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundColor(color)
+        }
+    }
+}
+
+struct ProcessRow: View {
+    let name: String
+    let value: String
+    
+    var body: some View {
+        HStack {
+            Text(name)
+                .font(.system(size: 11))
+                .lineLimit(1)
+            Spacer()
+            Text(value)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(.secondary)
+        }
     }
 }
 
@@ -179,7 +292,7 @@ struct TopMemoryDashboard: View {
 
 struct FormatUtils {
     static func formatBytes(_ bytes: Double) -> String {
-        if bytes == 0 { return "0 KB" }
+        if bytes < 1024 { return String(format: "%.0f B", bytes) }
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useKB, .useMB, .useGB]
         formatter.countStyle = .memory
@@ -193,69 +306,82 @@ struct FormatUtils {
 struct SettingsView: View {
     @ObservedObject var monitor: SystemMonitor
     
+    @AppStorage("showMenuBarText") var showMenuBarText = true
+    @AppStorage("showMenuBarMode") var showMenuBarMode = MenuBarDisplayMode.cpu
+    @AppStorage("updateInterval") var updateInterval = 3.0
+    
+    @AppStorage("showCPU") var showCPU = true
+    @AppStorage("showGPU") var showGPU = true
+    @AppStorage("showMemory") var showMemory = true
+    @AppStorage("showDisk") var showDisk = true
+    @AppStorage("showNetwork") var showNetwork = true
+    @AppStorage("showTopCPU") var showTopCPU = true
+    @AppStorage("showTopMemory") var showTopMemory = true
+    
     var body: some View {
-        VStack(spacing: 12) {
-            GroupBox("MenuBar Display") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Show dynamic text", isOn: $monitor.showMenuBarText)
-                        .fontWeight(.medium)
-                    
-                    HStack {
-                        Text("Display Stat:")
-                            .foregroundColor(monitor.showMenuBarText ? .primary : .secondary)
-                        Spacer()
-                        Picker("", selection: $monitor.showMenuBarMode) {
+        ScrollView {
+            VStack(spacing: 16) {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Dynamic MenuBar Text", isOn: $showMenuBarText)
+                            .fontWeight(.medium)
+                        
+                        Picker("Display Stat:", selection: $showMenuBarMode) {
                             ForEach(MenuBarDisplayMode.allCases) { mode in
                                 Text(mode.rawValue).tag(mode)
                             }
                         }
-                        .pickerStyle(.menu)
-                        .disabled(!monitor.showMenuBarText)
+                        .disabled(!showMenuBarText)
                     }
-                    .padding(.leading, 20) // Indent the sub-option
+                    .padding(4)
+                } label: {
+                    Label("Menu Bar", systemImage: "menubar.rectangle")
                 }
-                .padding(.vertical, 6)
-            }
-            
-            GroupBox("Visibility") {
-                VStack(alignment: .leading, spacing: 6) {
-                    Toggle("Show CPU Load", isOn: $monitor.showCPU)
-                    Toggle("Show GPU Load", isOn: $monitor.showGPU)
-                    Toggle("Show Memory Usage", isOn: $monitor.showMemory)
-                    Toggle("Show Disk I/O", isOn: $monitor.showDisk)
-                    Toggle("Show Network Speed", isOn: $monitor.showNetwork)
-                    Toggle("Show Top CPU Processes", isOn: $monitor.showTopCPU)
-                    Toggle("Show Top Memory Processes", isOn: $monitor.showTopMemory)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
-            }
-            
-            GroupBox("Update Frequency") {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Current Interval: \(Int(monitor.updateInterval)) sec")
-                    HStack {
-                        Text("1s").font(.caption).foregroundColor(.secondary)
-                        Slider(value: $monitor.updateInterval, in: 1...10, step: 1.0)
-                        Text("10s").font(.caption).foregroundColor(.secondary)
+                
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("CPU Load", isOn: $showCPU)
+                        Toggle("GPU Load", isOn: $showGPU)
+                        Toggle("Memory Usage", isOn: $showMemory)
+                        Toggle("Disk I/O", isOn: $showDisk)
+                        Toggle("Network Speed", isOn: $showNetwork)
+                        Toggle("Top CPU Processes", isOn: $showTopCPU)
+                        Toggle("Top Memory Processes", isOn: $showTopMemory)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(4)
+                } label: {
+                    Label("Visibility", systemImage: "eye")
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
+                
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Refresh every")
+                            Text("\(Int(updateInterval))s")
+                                .bold()
+                                .foregroundColor(.accentColor)
+                        }
+                        Slider(value: $updateInterval, in: 1...10, step: 1.0)
+                    }
+                    .padding(4)
+                } label: {
+                    Label("Updates", systemImage: "timer")
+                }
             }
+            .padding()
         }
-        .padding()
-        .onChange(of: monitor.showCPU) { _ in monitor.saveSettings() }
-        .onChange(of: monitor.showGPU) { _ in monitor.saveSettings() }
-        .onChange(of: monitor.showMemory) { _ in monitor.saveSettings() }
-        .onChange(of: monitor.showDisk) { _ in monitor.saveSettings() }
-        .onChange(of: monitor.showNetwork) { _ in monitor.saveSettings() }
-        .onChange(of: monitor.showTopCPU) { _ in monitor.saveSettings() }
-        .onChange(of: monitor.showTopMemory) { _ in monitor.saveSettings() }
-        .onChange(of: monitor.showMenuBarMode) { _ in monitor.saveSettings() }
-        .onChange(of: monitor.showMenuBarText) { _ in monitor.saveSettings() }
-        .onChange(of: monitor.updateInterval) { _ in
-            monitor.saveSettings()
+        .onChange(of: showCPU) { val in monitor.showCPU = val }
+        .onChange(of: showGPU) { val in monitor.showGPU = val }
+        .onChange(of: showMemory) { val in monitor.showMemory = val }
+        .onChange(of: showDisk) { val in monitor.showDisk = val }
+        .onChange(of: showNetwork) { val in monitor.showNetwork = val }
+        .onChange(of: showTopCPU) { val in monitor.showTopCPU = val }
+        .onChange(of: showTopMemory) { val in monitor.showTopMemory = val }
+        .onChange(of: showMenuBarMode) { val in monitor.showMenuBarMode = val }
+        .onChange(of: showMenuBarText) { val in monitor.showMenuBarText = val }
+        .onChange(of: updateInterval) { val in
+            monitor.updateInterval = val
             monitor.startMonitoring()
         }
     }
