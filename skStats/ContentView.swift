@@ -290,50 +290,25 @@ struct ProcessRow: View {
     }
 }
 
-// MARK: - Utilities
-
-struct FormatUtils {
-    static func formatBytes(_ bytes: Double) -> String {
-        if bytes < 1024 { return String(format: "%.0f B", bytes) }
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB, .useGB]
-        formatter.countStyle = .memory
-        formatter.allowsNonnumericFormatting = false
-        return formatter.string(fromByteCount: Int64(bytes))
-    }
-}
-
 // MARK: - Settings
 
 struct SettingsView: View {
     @ObservedObject var monitor: SystemMonitor
-    
-    @AppStorage("showMenuBarText") var showMenuBarText = true
-    @AppStorage("showMenuBarMode") var showMenuBarMode = MenuBarDisplayMode.cpu
-    @AppStorage("updateInterval") var updateInterval = 3.0
-    
-    @AppStorage("showCPU") var showCPU = true
-    @AppStorage("showGPU") var showGPU = true
-    @AppStorage("showMemory") var showMemory = true
-    @AppStorage("showDisk") var showDisk = true
-    @AppStorage("showNetwork") var showNetwork = true
-    @AppStorage("showTopCPU") var showTopCPU = true
-    @AppStorage("showTopMemory") var showTopMemory = true
     
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
-                        Toggle("Dynamic MenuBar Text", isOn: $showMenuBarText)
+                        Toggle("Dynamic MenuBar Text", isOn: $monitor.showMenuBarText)
                             .fontWeight(.medium)
                         
-                        Picker("Display Stat:", selection: $showMenuBarMode) {
+                        Picker("Display Stat:", selection: $monitor.showMenuBarMode) {
                             ForEach(MenuBarDisplayMode.allCases) { mode in
                                 Text(mode.rawValue).tag(mode)
                             }
                         }
-                        .disabled(!showMenuBarText)
+                        .disabled(!monitor.showMenuBarText)
                     }
                     .padding(4)
                 } label: {
@@ -342,13 +317,13 @@ struct SettingsView: View {
                 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
-                        Toggle("CPU Load", isOn: $showCPU)
-                        Toggle("GPU Load", isOn: $showGPU)
-                        Toggle("Memory Usage", isOn: $showMemory)
-                        Toggle("Disk I/O", isOn: $showDisk)
-                        Toggle("Network Speed", isOn: $showNetwork)
-                        Toggle("Top CPU Processes", isOn: $showTopCPU)
-                        Toggle("Top Memory Processes", isOn: $showTopMemory)
+                        Toggle("CPU Load", isOn: $monitor.showCPU)
+                        Toggle("GPU Load", isOn: $monitor.showGPU)
+                        Toggle("Memory Usage", isOn: $monitor.showMemory)
+                        Toggle("Disk I/O", isOn: $monitor.showDisk)
+                        Toggle("Network Speed", isOn: $monitor.showNetwork)
+                        Toggle("Top CPU Processes", isOn: $monitor.showTopCPU)
+                        Toggle("Top Memory Processes", isOn: $monitor.showTopMemory)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(4)
@@ -360,11 +335,11 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("Refresh every")
-                            Text("\(Int(updateInterval))s")
+                            Text("\(Int(monitor.updateInterval))s")
                                 .bold()
                                 .foregroundColor(.accentColor)
                         }
-                        Slider(value: $updateInterval, in: 1...10, step: 1.0)
+                        Slider(value: $monitor.updateInterval, in: 1...10, step: 1.0)
                     }
                     .padding(4)
                 } label: {
@@ -373,17 +348,7 @@ struct SettingsView: View {
             }
             .padding()
         }
-        .onChange(of: showCPU) { val in monitor.showCPU = val }
-        .onChange(of: showGPU) { val in monitor.showGPU = val }
-        .onChange(of: showMemory) { val in monitor.showMemory = val }
-        .onChange(of: showDisk) { val in monitor.showDisk = val }
-        .onChange(of: showNetwork) { val in monitor.showNetwork = val }
-        .onChange(of: showTopCPU) { val in monitor.showTopCPU = val }
-        .onChange(of: showTopMemory) { val in monitor.showTopMemory = val }
-        .onChange(of: showMenuBarMode) { val in monitor.showMenuBarMode = val }
-        .onChange(of: showMenuBarText) { val in monitor.showMenuBarText = val }
-        .onChange(of: updateInterval) { val in
-            monitor.updateInterval = val
+        .onChange(of: monitor.updateInterval) { _ in
             monitor.startMonitoring()
         }
     }

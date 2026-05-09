@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI
 import Darwin
 import IOKit
 import IOKit.storage
@@ -48,62 +49,27 @@ class SystemMonitor: ObservableObject {
     @Published var networkUploadRate: Double = 0.0
     @Published var networkDownloadRate: Double = 0.0
     
-    @Published var showCPU: Bool = true
-    @Published var showGPU: Bool = true
-    @Published var showMemory: Bool = true
-    @Published var showDisk: Bool = true
-    @Published var showNetwork: Bool = true
-    @Published var showTopCPU: Bool = true
-    @Published var showTopMemory: Bool = true
+    @AppStorage("showCPU") var showCPU: Bool = true
+    @AppStorage("showGPU") var showGPU: Bool = true
+    @AppStorage("showMemory") var showMemory: Bool = true
+    @AppStorage("showDisk") var showDisk: Bool = true
+    @AppStorage("showNetwork") var showNetwork: Bool = true
+    @AppStorage("showTopCPU") var showTopCPU: Bool = true
+    @AppStorage("showTopMemory") var showTopMemory: Bool = true
     
-    @Published var showMenuBarMode: MenuBarDisplayMode = .cpu
-    @Published var showMenuBarText: Bool = true
+    @AppStorage("showMenuBarMode") var showMenuBarMode: MenuBarDisplayMode = .cpu
+    @AppStorage("showMenuBarText") var showMenuBarText: Bool = true
+    @AppStorage("updateInterval") var updateInterval: Double = 3.0
     
     @Published var topCPU: [TopProcess] = []
     @Published var topMemory: [TopProcess] = []
-    @Published var updateInterval: Double = 3.0
     
     private var timer: AnyCancellable?
     private let worker = TelemetryWorker()
     
     init() {
         self.memoryTotal = Double(ProcessInfo.processInfo.physicalMemory)
-        loadSettings()
         startMonitoring()
-    }
-    
-    func loadSettings() {
-        let defaults = UserDefaults.standard
-        showCPU = defaults.object(forKey: "showCPU") == nil ? true : defaults.bool(forKey: "showCPU")
-        showGPU = defaults.object(forKey: "showGPU") == nil ? true : defaults.bool(forKey: "showGPU")
-        showMemory = defaults.object(forKey: "showMemory") == nil ? true : defaults.bool(forKey: "showMemory")
-        showDisk = defaults.object(forKey: "showDisk") == nil ? true : defaults.bool(forKey: "showDisk")
-        showNetwork = defaults.object(forKey: "showNetwork") == nil ? true : defaults.bool(forKey: "showNetwork")
-        showTopCPU = defaults.object(forKey: "showTopCPU") == nil ? true : defaults.bool(forKey: "showTopCPU")
-        showTopMemory = defaults.object(forKey: "showTopMemory") == nil ? true : defaults.bool(forKey: "showTopMemory")
-        
-        if let modeStr = defaults.string(forKey: "showMenuBarMode"),
-           let mode = MenuBarDisplayMode(rawValue: modeStr) {
-            showMenuBarMode = mode
-        }
-        showMenuBarText = defaults.object(forKey: "showMenuBarText") == nil ? true : defaults.bool(forKey: "showMenuBarText")
-        if defaults.object(forKey: "updateInterval") != nil {
-            updateInterval = defaults.double(forKey: "updateInterval")
-        }
-    }
-    
-    func saveSettings() {
-        let defaults = UserDefaults.standard
-        defaults.set(showCPU, forKey: "showCPU")
-        defaults.set(showGPU, forKey: "showGPU")
-        defaults.set(showMemory, forKey: "showMemory")
-        defaults.set(showDisk, forKey: "showDisk")
-        defaults.set(showNetwork, forKey: "showNetwork")
-        defaults.set(showTopCPU, forKey: "showTopCPU")
-        defaults.set(showTopMemory, forKey: "showTopMemory")
-        defaults.set(showMenuBarMode.rawValue, forKey: "showMenuBarMode")
-        defaults.set(showMenuBarText, forKey: "showMenuBarText")
-        defaults.set(updateInterval, forKey: "updateInterval")
     }
     
     func startMonitoring() {
@@ -118,12 +84,19 @@ class SystemMonitor: ObservableObject {
     
     func updateStats() {
         let interval = updateInterval
-        let sCPU = showTopCPU
-        let sMem = showTopMemory
+        let options = TelemetryWorker.FetchOptions(
+            cpu: showCPU || showMenuBarMode == .cpu,
+            gpu: showGPU || showMenuBarMode == .gpu,
+            memory: showMemory || showMenuBarMode == .memory,
+            disk: showDisk || showMenuBarMode == .disk,
+            network: showNetwork || showMenuBarMode == .network,
+            topCPU: showTopCPU,
+            topMemory: showTopMemory
+        )
         let totalMem = memoryTotal
         
         Task {
-            let stats = await worker.fetchStats(interval: interval, showTopCPU: sCPU, showTopMemory: sMem, totalMemory: totalMem)
+            let stats = await worker.fetchStats(interval: interval, options: options, totalMemory: totalMem)
             self.cpuLoadPerCore = stats.cpuLoadPerCore
             self.gpuLoad = stats.gpuLoad
             self.memoryUsed = stats.memoryUsed
@@ -137,6 +110,23 @@ class SystemMonitor: ObservableObject {
     }
 }
 
+// MARK: - Utilities
+
+struct FormatUtils {
+    private static let formatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useKB, .useMB, .useGB]
+        f.countStyle = .memory
+        f.allowsNonnumericFormatting = false
+        return f
+    }()
+
+    static func formatBytes(_ bytes: Double) -> String {
+        if bytes < 1024 { return String(format: "%.0f B", bytes) }
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+}
+
 actor TelemetryWorker {
     private var previousCPUTicks: [processor_cpu_load_info] = []
     private var previousDiskBytesRead: UInt64 = 0
@@ -146,14 +136,49 @@ actor TelemetryWorker {
     private var previousProcessCPUTimes: [Int32: UInt64] = [:]
     private var lastUpdateTime: Date = Date()
     
-    func fetchStats(interval: Double, showTopCPU: Bool, showTopMemory: Bool, totalMemory: Double) -> SystemStats {
-        let cpu = fetchCPU()
-        let gpu = fetchGPU()
-        let mem = fetchMemory(totalMemory: totalMemory)
-        let disk = fetchDisk(interval: interval)
-        let net = fetchNetwork(interval: interval)
-        let topCPU = showTopCPU ? fetchTopCPUProcesses() : []
-        let topMem = showTopMemory ? fetchTopMemoryProcesses() : []
+    struct FetchOptions {
+        let cpu: Bool
+        let gpu: Bool
+        let memory: Bool
+        let disk: Bool
+        let network: Bool
+        let topCPU: Bool
+        let topMemory: Bool
+    }
+    
+    func fetchStats(interval: Double, options: FetchOptions, totalMemory: Double) async -> SystemStats {
+        var cpu: [Double] = []
+        var gpu: Double = 0
+        var mem: Double = 0
+        var disk: (read: Double, write: Double) = (0, 0)
+        var net: (up: Double, down: Double) = (0, 0)
+        var topCPU: [TopProcess] = []
+        var topMem: [TopProcess] = []
+        
+        await withTaskGroup(of: Void.self) { group in
+            if options.cpu {
+                group.addTask { cpu = await self.fetchCPU() }
+            }
+            if options.gpu {
+                group.addTask { gpu = await self.fetchGPU() }
+            }
+            if options.memory || options.topMemory {
+                group.addTask { mem = await self.fetchMemory(totalMemory: totalMemory) }
+            }
+            if options.disk {
+                group.addTask { disk = await self.fetchDisk(interval: interval) }
+            }
+            if options.network {
+                group.addTask { net = await self.fetchNetwork(interval: interval) }
+            }
+            if options.topCPU || options.topMemory {
+                group.addTask {
+                    let results = await self.fetchTopProcesses(showCPU: options.topCPU, showMemory: options.topMemory)
+                    topCPU = results.cpu
+                    topMem = results.memory
+                }
+            }
+        }
         
         lastUpdateTime = Date()
         
@@ -305,9 +330,10 @@ actor TelemetryWorker {
         return 0
     }
     
-    private func fetchTopCPUProcesses() -> [TopProcess] {
+    private func fetchTopProcesses(showCPU: Bool, showMemory: Bool) -> (cpu: [TopProcess], memory: [TopProcess]) {
         let pids = getPIDs()
-        var processes: [TopProcess] = []
+        var cpuProcesses: [TopProcess] = []
+        var memProcesses: [TopProcess] = []
         let now = Date()
         let timeInterval = now.timeIntervalSince(lastUpdateTime)
         var currentTimes: [Int32: UInt64] = [:]
@@ -316,35 +342,35 @@ actor TelemetryWorker {
             var usage = proc_taskinfo()
             let size = MemoryLayout<proc_taskinfo>.size
             if proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &usage, Int32(size)) == Int32(size) {
-                let totalTime = usage.pti_total_user + usage.pti_total_system
-                currentTimes[pid] = totalTime
-                if let prevTime = previousProcessCPUTimes[pid], timeInterval > 0 {
-                    let delta = Double(totalTime >= prevTime ? totalTime - prevTime : 0)
-                    let percentage = (delta / 1_000_000_000.0) / timeInterval * 100.0
-                    if percentage > 0.1 {
-                        processes.append(TopProcess(name: getName(pid: pid), value: String(format: "%.1f%%", percentage), sortValue: percentage))
+                if showCPU {
+                    let totalTime = usage.pti_total_user + usage.pti_total_system
+                    currentTimes[pid] = totalTime
+                    if let prevTime = previousProcessCPUTimes[pid], timeInterval > 0 {
+                        let delta = Double(totalTime >= prevTime ? totalTime - prevTime : 0)
+                        let percentage = (delta / 1_000_000_000.0) / timeInterval * 100.0
+                        if percentage > 0.1 {
+                            cpuProcesses.append(TopProcess(name: getName(pid: pid), value: String(format: "%.1f%%", percentage), sortValue: percentage))
+                        }
                     }
+                }
+                
+                if showMemory {
+                    let mem = usage.pti_resident_size
+                    let mb = Double(mem) / 1024.0 / 1024.0
+                    let formatValue = mb > 1024 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
+                    memProcesses.append(TopProcess(name: getName(pid: pid), value: formatValue, sortValue: Double(mem)))
                 }
             }
         }
-        self.previousProcessCPUTimes = currentTimes
-        return Array(processes.sorted { $0.sortValue > $1.sortValue }.prefix(3))
-    }
-    
-    private func fetchTopMemoryProcesses() -> [TopProcess] {
-        let pids = getPIDs()
-        var processes: [TopProcess] = []
-        for pid in pids {
-            var usage = proc_taskinfo()
-            let size = MemoryLayout<proc_taskinfo>.size
-            if proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &usage, Int32(size)) == Int32(size) {
-                let mem = usage.pti_resident_size
-                let mb = Double(mem) / 1024.0 / 1024.0
-                let formatValue = mb > 1024 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
-                processes.append(TopProcess(name: getName(pid: pid), value: formatValue, sortValue: Double(mem)))
-            }
+        
+        if showCPU {
+            self.previousProcessCPUTimes = currentTimes
         }
-        return Array(processes.sorted { $0.sortValue > $1.sortValue }.prefix(3))
+        
+        return (
+            cpu: Array(cpuProcesses.sorted { $0.sortValue > $1.sortValue }.prefix(3)),
+            memory: Array(memProcesses.sorted { $0.sortValue > $1.sortValue }.prefix(3))
+        )
     }
     
     private func getPIDs() -> [Int32] {
