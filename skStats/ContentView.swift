@@ -101,16 +101,18 @@ struct CPUDashboard: View {
             let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(0..<count, id: \.self) { index in
+                    let load = monitor.cpuLoadPerCore[index]
                     VStack(spacing: 4) {
-                        Gauge(value: monitor.cpuLoadPerCore[index]) {
+                        Gauge(value: load) {
                             Text("")
                         } currentValueLabel: {
-                            Text("\(Int(monitor.cpuLoadPerCore[index] * 100))")
+                            Text("\(Int(load * 100))")
                                 .font(.system(size: 8, weight: .bold))
                         }
                         .gaugeStyle(.accessoryCircularCapacity)
                         .scaleEffect(0.7)
                         .frame(height: 30)
+                        .tint(load > 0.9 ? .red : (load > 0.7 ? .orange : .green))
                         
                         Text("Core \(index)")
                             .font(.system(size: 8))
