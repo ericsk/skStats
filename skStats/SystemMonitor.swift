@@ -5,6 +5,7 @@ import Darwin
 import IOKit
 import IOKit.storage
 import IOKit.network
+import IOKit.ps
 
 enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     case cpu = "CPU"
@@ -12,6 +13,7 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     case memory = "Memory"
     case network = "Network"
     case disk = "Disk"
+    case battery = "Battery"
     var id: String { self.rawValue }
 }
 
@@ -26,10 +28,20 @@ struct SystemStats {
     let cpuLoadPerCore: [Double]
     let gpuLoad: Double
     let memoryUsed: Double
+    let memorySwap: Double
+    let memoryPressure: Double
     let diskRead: Double
     let diskWrite: Double
+    let diskFree: Int64
+    let diskTotal: Int64
     let netUp: Double
     let netDown: Double
+    let batteryLevel: Double
+    let batteryIsCharging: Bool
+    let batteryPowerUsage: Double
+    let batteryCycleCount: Int
+    let batteryHealth: Double
+    let uptime: TimeInterval
     let topCPU: [TopProcess]
     let topMemory: [TopProcess]
 }
@@ -49,6 +61,17 @@ class SystemMonitor: ObservableObject {
     @Published var networkUploadRate: Double = 0.0
     @Published var networkDownloadRate: Double = 0.0
     
+    @Published var memorySwap: Double = 0.0
+    @Published var memoryPressure: Double = 0.0
+    @Published var diskFree: Int64 = 0
+    @Published var diskTotal: Int64 = 0
+    @Published var batteryLevel: Double = 0.0
+    @Published var batteryIsCharging: Bool = false
+    @Published var batteryPowerUsage: Double = 0.0
+    @Published var batteryCycleCount: Int = 0
+    @Published var batteryHealth: Double = 0.0
+    @Published var uptime: TimeInterval = 0
+    
     @AppStorage("showCPU") var showCPU: Bool = true
     @AppStorage("showGPU") var showGPU: Bool = true
     @AppStorage("showMemory") var showMemory: Bool = true
@@ -56,6 +79,9 @@ class SystemMonitor: ObservableObject {
     @AppStorage("showNetwork") var showNetwork: Bool = true
     @AppStorage("showTopCPU") var showTopCPU: Bool = true
     @AppStorage("showTopMemory") var showTopMemory: Bool = true
+    @AppStorage("showBattery") var showBattery: Bool = true
+    @AppStorage("showAdvancedMemory") var showAdvancedMemory: Bool = true
+    @AppStorage("showSystemInfo") var showSystemInfo: Bool = true
     
     @AppStorage("showMenuBarMode") var showMenuBarMode: MenuBarDisplayMode = .cpu
     @AppStorage("showMenuBarText") var showMenuBarText: Bool = true
@@ -90,6 +116,9 @@ class SystemMonitor: ObservableObject {
             memory: showMemory || showMenuBarMode == .memory,
             disk: showDisk || showMenuBarMode == .disk,
             network: showNetwork || showMenuBarMode == .network,
+            battery: showBattery || showMenuBarMode == .battery,
+            advancedMemory: showAdvancedMemory,
+            systemInfo: showSystemInfo,
             topCPU: showTopCPU,
             topMemory: showTopMemory
         )
@@ -100,10 +129,20 @@ class SystemMonitor: ObservableObject {
             self.cpuLoadPerCore = stats.cpuLoadPerCore
             self.gpuLoad = stats.gpuLoad
             self.memoryUsed = stats.memoryUsed
+            self.memorySwap = stats.memorySwap
+            self.memoryPressure = stats.memoryPressure
             self.diskReadRate = stats.diskRead
             self.diskWriteRate = stats.diskWrite
+            self.diskFree = stats.diskFree
+            self.diskTotal = stats.diskTotal
             self.networkDownloadRate = stats.netDown
             self.networkUploadRate = stats.netUp
+            self.batteryLevel = stats.batteryLevel
+            self.batteryIsCharging = stats.batteryIsCharging
+            self.batteryPowerUsage = stats.batteryPowerUsage
+            self.batteryCycleCount = stats.batteryCycleCount
+            self.batteryHealth = stats.batteryHealth
+            self.uptime = stats.uptime
             self.topCPU = stats.topCPU
             self.topMemory = stats.topMemory
         }
@@ -142,6 +181,9 @@ actor TelemetryWorker {
         let memory: Bool
         let disk: Bool
         let network: Bool
+        let battery: Bool
+        let advancedMemory: Bool
+        let systemInfo: Bool
         let topCPU: Bool
         let topMemory: Bool
     }
@@ -150,8 +192,13 @@ actor TelemetryWorker {
         var cpu: [Double] = []
         var gpu: Double = 0
         var mem: Double = 0
+        var swap: Double = 0
+        var pressure: Double = 0
         var disk: (read: Double, write: Double) = (0, 0)
+        var diskSpace: (free: Int64, total: Int64) = (0, 0)
         var net: (up: Double, down: Double) = (0, 0)
+        var battery: (level: Double, isCharging: Bool, usage: Double, cycles: Int, health: Double) = (0, false, 0, 0, 0)
+        var uptime: TimeInterval = 0
         var topCPU: [TopProcess] = []
         var topMem: [TopProcess] = []
         
@@ -162,14 +209,29 @@ actor TelemetryWorker {
             if options.gpu {
                 group.addTask { gpu = await self.fetchGPU() }
             }
-            if options.memory || options.topMemory {
-                group.addTask { mem = await self.fetchMemory(totalMemory: totalMemory) }
+            if options.memory || options.topMemory || options.advancedMemory {
+                group.addTask {
+                    mem = await self.fetchMemory(totalMemory: totalMemory)
+                    if options.advancedMemory {
+                        swap = await self.fetchSwap()
+                        pressure = await self.fetchMemoryPressure()
+                    }
+                }
             }
             if options.disk {
                 group.addTask { disk = await self.fetchDisk(interval: interval) }
             }
+            if options.systemInfo {
+                group.addTask {
+                    diskSpace = await self.fetchDiskSpace()
+                    uptime = await self.fetchUptime()
+                }
+            }
             if options.network {
                 group.addTask { net = await self.fetchNetwork(interval: interval) }
+            }
+            if options.battery {
+                group.addTask { battery = await self.fetchBattery() }
             }
             if options.topCPU || options.topMemory {
                 group.addTask {
@@ -186,13 +248,58 @@ actor TelemetryWorker {
             cpuLoadPerCore: cpu,
             gpuLoad: gpu,
             memoryUsed: mem,
+            memorySwap: swap,
+            memoryPressure: pressure,
             diskRead: disk.read,
             diskWrite: disk.write,
+            diskFree: diskSpace.free,
+            diskTotal: diskSpace.total,
             netUp: net.up,
             netDown: net.down,
+            batteryLevel: battery.level,
+            batteryIsCharging: battery.isCharging,
+            batteryPowerUsage: battery.usage,
+            batteryCycleCount: battery.cycles,
+            batteryHealth: battery.health,
+            uptime: uptime,
             topCPU: topCPU,
             topMemory: topMem
         )
+    }
+    
+    private func fetchSwap() -> Double {
+        var usage = xsw_usage()
+        var size = MemoryLayout<xsw_usage>.size
+        if sysctlbyname("vm.swapusage", &usage, &size, nil, 0) == 0 {
+            return Double(usage.xsu_used)
+        }
+        return 0
+    }
+    
+    private func fetchMemoryPressure() -> Double {
+        var pressure: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        if sysctlbyname("kern.memorystatus_level", &pressure, &size, nil, 0) == 0 {
+            return Double(pressure)
+        }
+        return 0
+    }
+    
+    private func fetchDiskSpace() -> (free: Int64, total: Int64) {
+        let fileManager = FileManager.default
+        let path = "/"
+        do {
+            let attrs = try fileManager.attributesOfFileSystem(forPath: path)
+            let free = attrs[.systemFreeSize] as? Int64 ?? 0
+            let total = attrs[.systemSize] as? Int64 ?? 0
+            return (free, total)
+        } catch {
+            return (0, 0)
+        }
+    }
+    
+    private func fetchUptime() -> TimeInterval {
+        return ProcessInfo.processInfo.systemUptime
     }
     
     private func fetchCPU() -> [Double] {
@@ -304,6 +411,47 @@ actor TelemetryWorker {
         self.previousNetworkBytesIn = bytesIn
         self.previousNetworkBytesOut = bytesOut
         return (up, down)
+    }
+    
+    private func fetchBattery() -> (level: Double, isCharging: Bool, usage: Double, cycles: Int, health: Double) {
+        var level: Double = 0
+        var isCharging: Bool = false
+        var cycles: Int = 0
+        var health: Double = 0
+        var usage: Double = 0
+        
+        let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
+        let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue() as Array
+        for source in sources {
+            if let description = IOPSGetPowerSourceDescription(snapshot, source).takeUnretainedValue() as? [String: Any] {
+                level = (description[kIOPSCurrentCapacityKey] as? Double ?? 0) / (description[kIOPSMaxCapacityKey] as? Double ?? 100)
+                isCharging = description[kIOPSIsChargingKey] as? Bool ?? false
+            }
+        }
+        
+        var masterPort: mach_port_t = kIOMainPortDefault
+        var matchingDict = IOServiceMatching("AppleSmartBattery")
+        var iterator: io_iterator_t = 0
+        if IOServiceGetMatchingServices(masterPort, matchingDict, &iterator) == kIOReturnSuccess {
+            let batteryService = IOIteratorNext(iterator)
+            if batteryService != 0 {
+                var props: Unmanaged<CFMutableDictionary>?
+                if IORegistryEntryCreateCFProperties(batteryService, &props, kCFAllocatorDefault, 0) == kIOReturnSuccess,
+                   let dict = props?.takeRetainedValue() as? [String: Any] {
+                    cycles = dict["CycleCount"] as? Int ?? 0
+                    if let maxCap = dict["MaxCapacity"] as? Double, let designCap = dict["DesignCapacity"] as? Double {
+                        health = maxCap / designCap
+                    }
+                    if let amperage = dict["Amperage"] as? Double, let voltage = dict["Voltage"] as? Double {
+                        usage = (amperage * voltage) / 1000.0 // mW to W approx
+                    }
+                }
+                IOObjectRelease(batteryService)
+            }
+            IOObjectRelease(iterator)
+        }
+        
+        return (level, isCharging, usage, cycles, health)
     }
     
     private func fetchGPU() -> Double {

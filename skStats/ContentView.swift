@@ -16,8 +16,10 @@ struct ContentView: View {
                     if monitor.showCPU { CPUDashboard(monitor: monitor) }
                     if monitor.showGPU { GPUDashboard(monitor: monitor) }
                     if monitor.showMemory { MemoryDashboard(monitor: monitor) }
+                    if monitor.showBattery { BatteryDashboard(monitor: monitor) }
                     if monitor.showDisk { DiskDashboard(monitor: monitor) }
                     if monitor.showNetwork { NetworkDashboard(monitor: monitor) }
+                    if monitor.showSystemInfo { SystemInfoDashboard(monitor: monitor) }
                     if monitor.showTopCPU && !monitor.topCPU.isEmpty { TopCPUDashboard(monitor: monitor) }
                     if monitor.showTopMemory && !monitor.topMemory.isEmpty { TopMemoryDashboard(monitor: monitor) }
                 }
@@ -147,7 +149,7 @@ struct MemoryDashboard: View {
     
     var body: some View {
         DashboardSection(title: "Memory", icon: "memorychip") {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Gauge(value: monitor.memoryUsed, in: 0...monitor.memoryTotal) {
                     Text("Memory")
                 } currentValueLabel: {
@@ -156,11 +158,95 @@ struct MemoryDashboard: View {
                 .gaugeStyle(.accessoryLinearCapacity)
                 .tint(.blue)
                 
-                Text(String(format: "Usage: %.0f%%", (monitor.memoryUsed / monitor.memoryTotal) * 100))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                if monitor.showAdvancedMemory {
+                    HStack(spacing: 20) {
+                        StatView(label: "Pressure", value: String(format: "%.0f%%", monitor.memoryPressure), color: monitor.memoryPressure > 80 ? .red : (monitor.memoryPressure > 50 ? .orange : .green))
+                        StatView(label: "Swap", value: FormatUtils.formatBytes(monitor.memorySwap), color: .secondary)
+                    }
+                }
             }
         }
+    }
+}
+
+struct BatteryDashboard: View {
+    @ObservedObject var monitor: SystemMonitor
+    
+    var body: some View {
+        DashboardSection(title: "Battery", icon: "battery.100") {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Gauge(value: monitor.batteryLevel) {
+                        Text("Battery")
+                    } currentValueLabel: {
+                        Text("\(Int(monitor.batteryLevel * 100))%")
+                    }
+                    .gaugeStyle(.accessoryCircularCapacity)
+                    .tint(monitor.batteryLevel < 0.2 ? .red : .green)
+                    .scaleEffect(0.8)
+                    .frame(width: 40, height: 40)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(monitor.batteryIsCharging ? "Charging" : "Discharging")
+                            .font(.system(size: 11, weight: .bold))
+                        if monitor.batteryPowerUsage != 0 {
+                            Text(String(format: "Power: %.1f W", monitor.batteryPowerUsage))
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(String(format: "Health: %.0f%%", monitor.batteryHealth * 100))
+                        Text("Cycles: \(monitor.batteryCycleCount)")
+                    }
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+}
+
+struct SystemInfoDashboard: View {
+    @ObservedObject var monitor: SystemMonitor
+    
+    var body: some View {
+        DashboardSection(title: "System Info", icon: "info.circle") {
+            VStack(alignment: .leading, spacing: 6) {
+                if monitor.diskTotal > 0 {
+                    VStack(alignment: .leading, spacing: 2) {
+                        let used = monitor.diskTotal - monitor.diskFree
+                        Gauge(value: Double(used), in: 0...Double(monitor.diskTotal)) {
+                            Text("Disk")
+                        } currentValueLabel: {
+                            Text(String(format: "Free: %@", FormatUtils.formatBytes(Double(monitor.diskFree))))
+                        }
+                        .gaugeStyle(.accessoryLinearCapacity)
+                        .tint(.gray)
+                        
+                        Text(String(format: "Total: %@", FormatUtils.formatBytes(Double(monitor.diskTotal))))
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                HStack {
+                    Image(systemName: "clock")
+                        .font(.system(size: 10))
+                    Text("Uptime: \(formatUptime(monitor.uptime))")
+                        .font(.system(size: 10, design: .monospaced))
+                }
+                .foregroundColor(.secondary)
+            }
+        }
+    }
+    
+    private func formatUptime(_ uptime: TimeInterval) -> String {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.day, .hour, .minute]
+        formatter.unitsStyle = .abbreviated
+        return formatter.string(from: uptime) ?? ""
     }
 }
 
@@ -320,8 +406,11 @@ struct SettingsView: View {
                         Toggle("CPU Load", isOn: $monitor.showCPU)
                         Toggle("GPU Load", isOn: $monitor.showGPU)
                         Toggle("Memory Usage", isOn: $monitor.showMemory)
+                        Toggle("Advanced Memory", isOn: $monitor.showAdvancedMemory)
+                        Toggle("Battery Status", isOn: $monitor.showBattery)
                         Toggle("Disk I/O", isOn: $monitor.showDisk)
                         Toggle("Network Speed", isOn: $monitor.showNetwork)
+                        Toggle("System Info", isOn: $monitor.showSystemInfo)
                         Toggle("Top CPU Processes", isOn: $monitor.showTopCPU)
                         Toggle("Top Memory Processes", isOn: $monitor.showTopMemory)
                     }
