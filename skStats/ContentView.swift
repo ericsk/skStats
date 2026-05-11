@@ -190,7 +190,12 @@ struct BatteryDashboard: View {
                         Text(monitor.batteryIsCharging ? "Charging" : "Discharging")
                             .font(.system(size: 11, weight: .bold))
                         if monitor.batteryPowerUsage != 0 {
-                            Text(String(format: "Power: %.1f W", monitor.batteryPowerUsage))
+                            Text(String(format: "%@: %.1f W", monitor.batteryPowerUsage > 0 ? "Rate" : "Power", abs(monitor.batteryPowerUsage)))
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                        if monitor.batteryAdapterWattage > 0 {
+                            Text("Adapter: \(monitor.batteryAdapterWattage)W")
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                         }

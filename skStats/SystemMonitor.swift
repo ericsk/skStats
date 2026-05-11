@@ -39,6 +39,7 @@ struct SystemStats {
     let batteryLevel: Double
     let batteryIsCharging: Bool
     let batteryPowerUsage: Double
+    let batteryAdapterWattage: Int
     let batteryCycleCount: Int
     let batteryHealth: Double
     let uptime: TimeInterval
@@ -68,6 +69,7 @@ class SystemMonitor: ObservableObject {
     @Published var batteryLevel: Double = 0.0
     @Published var batteryIsCharging: Bool = false
     @Published var batteryPowerUsage: Double = 0.0
+    @Published var batteryAdapterWattage: Int = 0
     @Published var batteryCycleCount: Int = 0
     @Published var batteryHealth: Double = 0.0
     @Published var uptime: TimeInterval = 0
@@ -140,6 +142,7 @@ class SystemMonitor: ObservableObject {
             self.batteryLevel = stats.batteryLevel
             self.batteryIsCharging = stats.batteryIsCharging
             self.batteryPowerUsage = stats.batteryPowerUsage
+            self.batteryAdapterWattage = stats.batteryAdapterWattage
             self.batteryCycleCount = stats.batteryCycleCount
             self.batteryHealth = stats.batteryHealth
             self.uptime = stats.uptime
@@ -197,7 +200,7 @@ actor TelemetryWorker {
         var disk: (read: Double, write: Double) = (0, 0)
         var diskSpace: (free: Int64, total: Int64) = (0, 0)
         var net: (up: Double, down: Double) = (0, 0)
-        var battery: (level: Double, isCharging: Bool, usage: Double, cycles: Int, health: Double) = (0, false, 0, 0, 0)
+        var battery: (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double) = (0, false, 0, 0, 0, 0)
         var uptime: TimeInterval = 0
         var topCPU: [TopProcess] = []
         var topMem: [TopProcess] = []
@@ -259,6 +262,7 @@ actor TelemetryWorker {
             batteryLevel: battery.level,
             batteryIsCharging: battery.isCharging,
             batteryPowerUsage: battery.usage,
+            batteryAdapterWattage: battery.adapter,
             batteryCycleCount: battery.cycles,
             batteryHealth: battery.health,
             uptime: uptime,
@@ -413,12 +417,13 @@ actor TelemetryWorker {
         return (up, down)
     }
     
-    private func fetchBattery() -> (level: Double, isCharging: Bool, usage: Double, cycles: Int, health: Double) {
+    private func fetchBattery() -> (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double) {
         var level: Double = 0
         var isCharging: Bool = false
         var cycles: Int = 0
         var health: Double = 0
         var usage: Double = 0
+        var adapterWattage: Int = 0
         
         let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
         let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue() as Array
@@ -442,8 +447,13 @@ actor TelemetryWorker {
                     if let maxCap = dict["MaxCapacity"] as? Double, let designCap = dict["DesignCapacity"] as? Double {
                         health = maxCap / designCap
                     }
-                    if let amperage = dict["Amperage"] as? Double, let voltage = dict["Voltage"] as? Double {
-                        usage = (amperage * voltage) / 1000.0 // mW to W approx
+                    if let amperage = (dict["Amperage"] as? NSNumber)?.int64Value,
+                       let voltage = (dict["Voltage"] as? NSNumber)?.int64Value {
+                        usage = Double(amperage) * Double(voltage) / 1_000_000.0 // mA * mV = uW -> W
+                    }
+                    if let adapterDetails = dict["AdapterDetails"] as? [String: Any],
+                       let watts = adapterDetails["Watts"] as? Int {
+                        adapterWattage = watts
                     }
                 }
                 IOObjectRelease(batteryService)
@@ -451,7 +461,7 @@ actor TelemetryWorker {
             IOObjectRelease(iterator)
         }
         
-        return (level, isCharging, usage, cycles, health)
+        return (level, isCharging, usage, adapterWattage, cycles, health)
     }
     
     private func fetchGPU() -> Double {
