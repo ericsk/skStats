@@ -135,7 +135,8 @@ struct FormatUtils {
     }
 }
 
-actor TelemetryWorker {
+class TelemetryWorker {
+    private let queue = DispatchQueue(label: "com.skStats.telemetry", qos: .utility)
     private var previousCPUTicks: [processor_cpu_load_info] = []
     private var previousDiskBytesRead: UInt64 = 0
     private var previousDiskBytesWritten: UInt64 = 0
@@ -158,83 +159,76 @@ actor TelemetryWorker {
     }
     
     func fetchStats(interval: Double, options: FetchOptions, totalMemory: Double) async -> SystemStats {
-        var cpu: [Double] = []
-        var gpu: Double = 0
-        var mem: Double = 0
-        var swap: Double = 0
-        var pressure: Double = 0
-        var disk: (read: Double, write: Double) = (0, 0)
-        var diskSpace: (free: Int64, total: Int64) = (0, 0)
-        var net: (up: Double, down: Double) = (0, 0)
-        var battery: (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double) = (0, false, 0, 0, 0, 0)
-        var uptime: TimeInterval = 0
-        var topCPU: [TopProcess] = []
-        var topMem: [TopProcess] = []
-        
-        await withTaskGroup(of: Void.self) { group in
-            if options.cpu {
-                group.addTask { cpu = await self.fetchCPU() }
-            }
-            if options.gpu {
-                group.addTask { gpu = await self.fetchGPU() }
-            }
-            if options.memory || options.topMemory || options.advancedMemory {
-                group.addTask {
-                    mem = await self.fetchMemory(totalMemory: totalMemory)
+        return await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume(returning: SystemStats(cpuLoadPerCore: [], gpuLoad: 0, memoryUsed: 0, memorySwap: 0, memoryPressure: 0, diskRead: 0, diskWrite: 0, diskFree: 0, diskTotal: 0, netUp: 0, netDown: 0, batteryLevel: 0, batteryIsCharging: false, batteryPowerUsage: 0, batteryAdapterWattage: 0, batteryCycleCount: 0, batteryHealth: 0, uptime: 0, topCPU: [], topMemory: []))
+                    return
+                }
+                
+                var cpu: [Double] = []
+                var gpu: Double = 0
+                var mem: Double = 0
+                var swap: Double = 0
+                var pressure: Double = 0
+                var disk: (read: Double, write: Double) = (0, 0)
+                var diskSpace: (free: Int64, total: Int64) = (0, 0)
+                var net: (up: Double, down: Double) = (0, 0)
+                var battery: (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double) = (0, false, 0, 0, 0, 0)
+                var uptime: TimeInterval = 0
+                var topCPU: [TopProcess] = []
+                var topMem: [TopProcess] = []
+                
+                if options.cpu { cpu = self.fetchCPU() }
+                if options.gpu { gpu = self.fetchGPU() }
+                if options.memory || options.topMemory || options.advancedMemory {
+                    mem = self.fetchMemory(totalMemory: totalMemory)
                     if options.advancedMemory {
-                        swap = await self.fetchSwap()
-                        pressure = await self.fetchMemoryPressure()
+                        swap = self.fetchSwap()
+                        pressure = self.fetchMemoryPressure()
                     }
                 }
-            }
-            if options.disk {
-                group.addTask { disk = await self.fetchDisk(interval: interval) }
-            }
-            if options.systemInfo {
-                group.addTask {
-                    diskSpace = await self.fetchDiskSpace()
-                    uptime = await self.fetchUptime()
+                if options.disk { disk = self.fetchDisk(interval: interval) }
+                if options.systemInfo {
+                    diskSpace = self.fetchDiskSpace()
+                    uptime = self.fetchUptime()
                 }
-            }
-            if options.network {
-                group.addTask { net = await self.fetchNetwork(interval: interval) }
-            }
-            if options.battery {
-                group.addTask { battery = await self.fetchBattery() }
-            }
-            if options.topCPU || options.topMemory {
-                group.addTask {
-                    let results = await self.fetchTopProcesses(showCPU: options.topCPU, showMemory: options.topMemory)
+                if options.network { net = self.fetchNetwork(interval: interval) }
+                if options.battery { battery = self.fetchBattery() }
+                if options.topCPU || options.topMemory {
+                    let results = self.fetchTopProcesses(showCPU: options.topCPU, showMemory: options.topMemory)
                     topCPU = results.cpu
                     topMem = results.memory
                 }
+                
+                self.lastUpdateTime = Date()
+                
+                let stats = SystemStats(
+                    cpuLoadPerCore: cpu,
+                    gpuLoad: gpu,
+                    memoryUsed: mem,
+                    memorySwap: swap,
+                    memoryPressure: pressure,
+                    diskRead: disk.read,
+                    diskWrite: disk.write,
+                    diskFree: diskSpace.free,
+                    diskTotal: diskSpace.total,
+                    netUp: net.up,
+                    netDown: net.down,
+                    batteryLevel: battery.level,
+                    batteryIsCharging: battery.isCharging,
+                    batteryPowerUsage: battery.usage,
+                    batteryAdapterWattage: battery.adapter,
+                    batteryCycleCount: battery.cycles,
+                    batteryHealth: battery.health,
+                    uptime: uptime,
+                    topCPU: topCPU,
+                    topMemory: topMem
+                )
+                
+                continuation.resume(returning: stats)
             }
         }
-        
-        lastUpdateTime = Date()
-        
-        return SystemStats(
-            cpuLoadPerCore: cpu,
-            gpuLoad: gpu,
-            memoryUsed: mem,
-            memorySwap: swap,
-            memoryPressure: pressure,
-            diskRead: disk.read,
-            diskWrite: disk.write,
-            diskFree: diskSpace.free,
-            diskTotal: diskSpace.total,
-            netUp: net.up,
-            netDown: net.down,
-            batteryLevel: battery.level,
-            batteryIsCharging: battery.isCharging,
-            batteryPowerUsage: battery.usage,
-            batteryAdapterWattage: battery.adapter,
-            batteryCycleCount: battery.cycles,
-            batteryHealth: battery.health,
-            uptime: uptime,
-            topCPU: topCPU,
-            topMemory: topMem
-        )
     }
     
     private func fetchSwap() -> Double {
