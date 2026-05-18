@@ -135,7 +135,7 @@ struct FormatUtils {
     }
 }
 
-class TelemetryWorker {
+final class TelemetryWorker: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.skStats.telemetry", qos: .utility)
     private var previousCPUTicks: [processor_cpu_load_info] = []
     private var previousDiskBytesRead: UInt64 = 0
@@ -394,8 +394,8 @@ class TelemetryWorker {
             }
         }
         
-        var masterPort: mach_port_t = kIOMainPortDefault
-        var matchingDict = IOServiceMatching("AppleSmartBattery")
+        let masterPort: mach_port_t = kIOMainPortDefault
+        let matchingDict = IOServiceMatching("AppleSmartBattery")
         var iterator: io_iterator_t = 0
         if IOServiceGetMatchingServices(masterPort, matchingDict, &iterator) == kIOReturnSuccess {
             let batteryService = IOIteratorNext(iterator)
