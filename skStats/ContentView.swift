@@ -13,15 +13,17 @@ struct ContentView: View {
             } else {
                 mainHeader
                 VStack(alignment: .leading, spacing: 14) {
-                    if monitor.showCPU { CPUDashboard(monitor: monitor) }
-                    if monitor.showGPU { GPUDashboard(monitor: monitor) }
-                    if monitor.showMemory { MemoryDashboard(monitor: monitor) }
-                    if monitor.showBattery { BatteryDashboard(monitor: monitor) }
-                    if monitor.showDisk { DiskDashboard(monitor: monitor) }
-                    if monitor.showNetwork { NetworkDashboard(monitor: monitor) }
-                    if monitor.showSystemInfo { SystemInfoDashboard(monitor: monitor) }
-                    if monitor.showTopCPU && !monitor.topCPU.isEmpty { TopCPUDashboard(monitor: monitor) }
-                    if monitor.showTopMemory && !monitor.topMemory.isEmpty { TopMemoryDashboard(monitor: monitor) }
+                    if let stats = monitor.currentStats {
+                        if monitor.showCPU { CPUDashboard(cpuLoadPerCore: stats.cpuLoadPerCore) }
+                        if monitor.showGPU { GPUDashboard(gpuLoad: stats.gpuLoad) }
+                        if monitor.showMemory { MemoryDashboard(memoryUsed: stats.memoryUsed, memoryTotal: monitor.memoryTotal, memoryPressure: stats.memoryPressure, memorySwap: stats.memorySwap, showAdvancedMemory: monitor.showAdvancedMemory) }
+                        if monitor.showBattery { BatteryDashboard(batteryLevel: stats.batteryLevel, batteryIsCharging: stats.batteryIsCharging, batteryPowerUsage: stats.batteryPowerUsage, batteryAdapterWattage: stats.batteryAdapterWattage, batteryCycleCount: stats.batteryCycleCount, batteryHealth: stats.batteryHealth) }
+                        if monitor.showDisk { DiskDashboard(diskReadRate: stats.diskRead, diskWriteRate: stats.diskWrite) }
+                        if monitor.showNetwork { NetworkDashboard(networkDownloadRate: stats.netDown, networkUploadRate: stats.netUp) }
+                        if monitor.showSystemInfo { SystemInfoDashboard(diskFree: stats.diskFree, diskTotal: stats.diskTotal, uptime: stats.uptime) }
+                        if monitor.showTopCPU && !stats.topCPU.isEmpty { TopCPUDashboard(topCPU: stats.topCPU) }
+                        if monitor.showTopMemory && !stats.topMemory.isEmpty { TopMemoryDashboard(topMemory: stats.topMemory) }
+                    }
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 16)
@@ -31,6 +33,8 @@ struct ContentView: View {
         .frame(width: 320)
         .background(VisualEffectView(material: .menu, blendingMode: .behindWindow))
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isShowingSettings)
+        .onAppear { monitor.isPopoverVisible = true }
+        .onDisappear { monitor.isPopoverVisible = false }
     }
     
     private var mainHeader: some View {
@@ -95,15 +99,15 @@ struct VisualEffectView: NSViewRepresentable {
 // MARK: - Subcomponents
 
 struct CPUDashboard: View {
-    @ObservedObject var monitor: SystemMonitor
+    let cpuLoadPerCore: [Double]
     
     var body: some View {
         DashboardSection(title: "CPU Load", icon: "cpu") {
-            let count = monitor.cpuLoadPerCore.count
+            let count = cpuLoadPerCore.count
             let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(0..<count, id: \.self) { index in
-                    let load = monitor.cpuLoadPerCore[index]
+                    let load = cpuLoadPerCore[index]
                     VStack(spacing: 4) {
                         Gauge(value: load) {
                             Text("")
@@ -127,15 +131,15 @@ struct CPUDashboard: View {
 }
 
 struct GPUDashboard: View {
-    @ObservedObject var monitor: SystemMonitor
+    let gpuLoad: Double
     
     var body: some View {
         DashboardSection(title: "GPU Load", icon: "cpu.fill") {
             HStack {
-                Gauge(value: monitor.gpuLoad) {
+                Gauge(value: gpuLoad) {
                     Text("GPU")
                 } currentValueLabel: {
-                    Text("\(Int(monitor.gpuLoad * 100))%")
+                    Text("\(Int(gpuLoad * 100))%")
                 }
                 .gaugeStyle(.accessoryLinearCapacity)
                 .tint(.purple)
@@ -145,23 +149,27 @@ struct GPUDashboard: View {
 }
 
 struct MemoryDashboard: View {
-    @ObservedObject var monitor: SystemMonitor
+    let memoryUsed: Double
+    let memoryTotal: Double
+    let memoryPressure: Double
+    let memorySwap: Double
+    let showAdvancedMemory: Bool
     
     var body: some View {
         DashboardSection(title: "Memory", icon: "memorychip") {
             VStack(alignment: .leading, spacing: 6) {
-                Gauge(value: monitor.memoryUsed, in: 0...monitor.memoryTotal) {
+                Gauge(value: memoryUsed, in: 0...memoryTotal) {
                     Text("Memory")
                 } currentValueLabel: {
-                    Text(String(format: "%.1f GB / %.1f GB", monitor.memoryUsed / 1_000_000_000, monitor.memoryTotal / 1_000_000_000))
+                    Text(String(format: "%.1f GB / %.1f GB", memoryUsed / 1_000_000_000, memoryTotal / 1_000_000_000))
                 }
                 .gaugeStyle(.accessoryLinearCapacity)
                 .tint(.blue)
                 
-                if monitor.showAdvancedMemory {
+                if showAdvancedMemory {
                     HStack(spacing: 20) {
-                        StatView(label: "Pressure", value: String(format: "%.0f%%", monitor.memoryPressure), color: monitor.memoryPressure > 80 ? .red : (monitor.memoryPressure > 50 ? .orange : .green))
-                        StatView(label: "Swap", value: FormatUtils.formatBytes(monitor.memorySwap), color: .secondary)
+                        StatView(label: "Pressure", value: String(format: "%.0f%%", memoryPressure), color: memoryPressure > 80 ? .red : (memoryPressure > 50 ? .orange : .green))
+                        StatView(label: "Swap", value: FormatUtils.formatBytes(memorySwap), color: .secondary)
                     }
                 }
             }
@@ -170,40 +178,45 @@ struct MemoryDashboard: View {
 }
 
 struct BatteryDashboard: View {
-    @ObservedObject var monitor: SystemMonitor
+    let batteryLevel: Double
+    let batteryIsCharging: Bool
+    let batteryPowerUsage: Double
+    let batteryAdapterWattage: Int
+    let batteryCycleCount: Int
+    let batteryHealth: Double
     
     var body: some View {
         DashboardSection(title: "Battery", icon: "battery.100") {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 12) {
-                    Gauge(value: monitor.batteryLevel) {
+                    Gauge(value: batteryLevel) {
                         Text("Battery")
                     } currentValueLabel: {
-                        Text("\(Int(monitor.batteryLevel * 100))%")
+                        Text("\(Int(batteryLevel * 100))%")
                     }
                     .gaugeStyle(.accessoryCircularCapacity)
-                    .tint(monitor.batteryLevel < 0.2 ? .red : .green)
+                    .tint(batteryLevel < 0.2 ? .red : .green)
                     .scaleEffect(0.8)
                     .frame(width: 40, height: 40)
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(monitor.batteryIsCharging ? "Charging" : "Discharging")
+                        Text(batteryIsCharging ? "Charging" : "Discharging")
                             .font(.system(size: 11, weight: .bold))
-                        if monitor.batteryPowerUsage != 0 {
-                            Text(String(format: "%@: %.1f W", monitor.batteryPowerUsage > 0 ? "Rate" : "Power", abs(monitor.batteryPowerUsage)))
+                        if batteryPowerUsage != 0 {
+                            Text(String(format: "%@: %.1f W", batteryPowerUsage > 0 ? "Rate" : "Power", abs(batteryPowerUsage)))
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                         }
-                        if monitor.batteryAdapterWattage > 0 {
-                            Text("Adapter: \(monitor.batteryAdapterWattage)W")
+                        if batteryAdapterWattage > 0 {
+                            Text("Adapter: \(batteryAdapterWattage)W")
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                         }
                     }
                     Spacer()
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text(String(format: "Health: %.0f%%", monitor.batteryHealth * 100))
-                        Text("Cycles: \(monitor.batteryCycleCount)")
+                        Text(String(format: "Health: %.0f%%", batteryHealth * 100))
+                        Text("Cycles: \(batteryCycleCount)")
                     }
                     .font(.system(size: 9))
                     .foregroundColor(.secondary)
@@ -214,23 +227,25 @@ struct BatteryDashboard: View {
 }
 
 struct SystemInfoDashboard: View {
-    @ObservedObject var monitor: SystemMonitor
+    let diskFree: Int64
+    let diskTotal: Int64
+    let uptime: TimeInterval
     
     var body: some View {
         DashboardSection(title: "System Info", icon: "info.circle") {
             VStack(alignment: .leading, spacing: 6) {
-                if monitor.diskTotal > 0 {
+                if diskTotal > 0 {
                     VStack(alignment: .leading, spacing: 2) {
-                        let used = monitor.diskTotal - monitor.diskFree
-                        Gauge(value: Double(used), in: 0...Double(monitor.diskTotal)) {
+                        let used = diskTotal - diskFree
+                        Gauge(value: Double(used), in: 0...Double(diskTotal)) {
                             Text("Disk")
                         } currentValueLabel: {
-                            Text(String(format: "Free: %@", FormatUtils.formatBytes(Double(monitor.diskFree))))
+                            Text(String(format: "Free: %@", FormatUtils.formatBytes(Double(diskFree))))
                         }
                         .gaugeStyle(.accessoryLinearCapacity)
                         .tint(.gray)
                         
-                        Text(String(format: "Total: %@", FormatUtils.formatBytes(Double(monitor.diskTotal))))
+                        Text(String(format: "Total: %@", FormatUtils.formatBytes(Double(diskTotal))))
                             .font(.system(size: 9))
                             .foregroundColor(.secondary)
                     }
@@ -239,7 +254,7 @@ struct SystemInfoDashboard: View {
                 HStack {
                     Image(systemName: "clock")
                         .font(.system(size: 10))
-                    Text("Uptime: \(formatUptime(monitor.uptime))")
+                    Text("Uptime: \(formatUptime(uptime))")
                         .font(.system(size: 10, design: .monospaced))
                 }
                 .foregroundColor(.secondary)
@@ -256,38 +271,40 @@ struct SystemInfoDashboard: View {
 }
 
 struct DiskDashboard: View {
-    @ObservedObject var monitor: SystemMonitor
+    let diskReadRate: Double
+    let diskWriteRate: Double
     
     var body: some View {
         DashboardSection(title: "Disk I/O", icon: "externaldrive") {
             HStack(spacing: 20) {
-                StatView(label: "Read", value: FormatUtils.formatBytes(monitor.diskReadRate) + "/s", color: .green)
-                StatView(label: "Write", value: FormatUtils.formatBytes(monitor.diskWriteRate) + "/s", color: .orange)
+                StatView(label: "Read", value: FormatUtils.formatBytes(diskReadRate) + "/s", color: .green)
+                StatView(label: "Write", value: FormatUtils.formatBytes(diskWriteRate) + "/s", color: .orange)
             }
         }
     }
 }
 
 struct NetworkDashboard: View {
-    @ObservedObject var monitor: SystemMonitor
+    let networkDownloadRate: Double
+    let networkUploadRate: Double
     
     var body: some View {
         DashboardSection(title: "Network", icon: "network") {
             HStack(spacing: 20) {
-                StatView(label: "Down", value: FormatUtils.formatBytes(monitor.networkDownloadRate) + "/s", icon: "arrow.down", color: .blue)
-                StatView(label: "Up", value: FormatUtils.formatBytes(monitor.networkUploadRate) + "/s", icon: "arrow.up", color: .red)
+                StatView(label: "Down", value: FormatUtils.formatBytes(networkDownloadRate) + "/s", icon: "arrow.down", color: .blue)
+                StatView(label: "Up", value: FormatUtils.formatBytes(networkUploadRate) + "/s", icon: "arrow.up", color: .red)
             }
         }
     }
 }
 
 struct TopCPUDashboard: View {
-    @ObservedObject var monitor: SystemMonitor
+    let topCPU: [TopProcess]
     
     var body: some View {
         DashboardSection(title: "Top CPU", icon: "list.bullet.rectangle") {
             VStack(spacing: 6) {
-                ForEach(monitor.topCPU) { process in
+                ForEach(topCPU) { process in
                     ProcessRow(name: process.name, value: process.value)
                 }
             }
@@ -296,12 +313,12 @@ struct TopCPUDashboard: View {
 }
 
 struct TopMemoryDashboard: View {
-    @ObservedObject var monitor: SystemMonitor
+    let topMemory: [TopProcess]
     
     var body: some View {
         DashboardSection(title: "Top Memory", icon: "list.bullet.indent") {
             VStack(spacing: 6) {
-                ForEach(monitor.topMemory) { process in
+                ForEach(topMemory) { process in
                     ProcessRow(name: process.name, value: process.value)
                 }
             }

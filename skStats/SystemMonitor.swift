@@ -17,15 +17,23 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     var id: String { self.rawValue }
 }
 
-struct TopProcess: Identifiable {
+struct TopProcess: Identifiable, Equatable {
     let id = UUID()
     let name: String
     let value: String
     let sortValue: Double
+    
+    static func == (lhs: TopProcess, rhs: TopProcess) -> Bool {
+        return lhs.name == rhs.name && lhs.value == rhs.value && lhs.sortValue == rhs.sortValue
+    }
 }
 
-struct SystemStats {
+struct SystemStats: Equatable {
     let cpuLoadPerCore: [Double]
+    var totalCPULoad: Double {
+        guard !cpuLoadPerCore.isEmpty else { return 0.0 }
+        return cpuLoadPerCore.reduce(0, +) / Double(cpuLoadPerCore.count)
+    }
     let gpuLoad: Double
     let memoryUsed: Double
     let memorySwap: Double
@@ -49,30 +57,9 @@ struct SystemStats {
 
 @MainActor
 class SystemMonitor: ObservableObject {
-    @Published var cpuLoadPerCore: [Double] = []
-    var totalCPULoad: Double {
-        guard !cpuLoadPerCore.isEmpty else { return 0.0 }
-        return cpuLoadPerCore.reduce(0, +) / Double(cpuLoadPerCore.count)
-    }
-    @Published var gpuLoad: Double = 0.0
-    @Published var memoryUsed: Double = 0.0
+    @Published var currentStats: SystemStats? = nil
+    @Published var isPopoverVisible: Bool = false
     @Published var memoryTotal: Double = 0.0
-    @Published var diskReadRate: Double = 0.0
-    @Published var diskWriteRate: Double = 0.0
-    @Published var networkUploadRate: Double = 0.0
-    @Published var networkDownloadRate: Double = 0.0
-    
-    @Published var memorySwap: Double = 0.0
-    @Published var memoryPressure: Double = 0.0
-    @Published var diskFree: Int64 = 0
-    @Published var diskTotal: Int64 = 0
-    @Published var batteryLevel: Double = 0.0
-    @Published var batteryIsCharging: Bool = false
-    @Published var batteryPowerUsage: Double = 0.0
-    @Published var batteryAdapterWattage: Int = 0
-    @Published var batteryCycleCount: Int = 0
-    @Published var batteryHealth: Double = 0.0
-    @Published var uptime: TimeInterval = 0
     
     @AppStorage("showCPU") var showCPU: Bool = true
     @AppStorage("showGPU") var showGPU: Bool = true
@@ -88,9 +75,6 @@ class SystemMonitor: ObservableObject {
     @AppStorage("showMenuBarMode") var showMenuBarMode: MenuBarDisplayMode = .cpu
     @AppStorage("showMenuBarText") var showMenuBarText: Bool = true
     @AppStorage("updateInterval") var updateInterval: Double = 3.0
-    
-    @Published var topCPU: [TopProcess] = []
-    @Published var topMemory: [TopProcess] = []
     
     private var timer: AnyCancellable?
     private let worker = TelemetryWorker()
@@ -112,42 +96,24 @@ class SystemMonitor: ObservableObject {
     
     func updateStats() {
         let interval = updateInterval
+        let isVisible = isPopoverVisible
         let options = TelemetryWorker.FetchOptions(
-            cpu: showCPU || showMenuBarMode == .cpu,
-            gpu: showGPU || showMenuBarMode == .gpu,
-            memory: showMemory || showMenuBarMode == .memory,
-            disk: showDisk || showMenuBarMode == .disk,
-            network: showNetwork || showMenuBarMode == .network,
-            battery: showBattery || showMenuBarMode == .battery,
-            advancedMemory: showAdvancedMemory,
-            systemInfo: showSystemInfo,
-            topCPU: showTopCPU,
-            topMemory: showTopMemory
+            cpu: isVisible ? showCPU : (showMenuBarMode == .cpu),
+            gpu: isVisible ? showGPU : (showMenuBarMode == .gpu),
+            memory: isVisible ? showMemory : (showMenuBarMode == .memory),
+            disk: isVisible ? showDisk : (showMenuBarMode == .disk),
+            network: isVisible ? showNetwork : (showMenuBarMode == .network),
+            battery: isVisible ? showBattery : (showMenuBarMode == .battery),
+            advancedMemory: isVisible ? showAdvancedMemory : false,
+            systemInfo: isVisible ? showSystemInfo : false,
+            topCPU: isVisible ? showTopCPU : false,
+            topMemory: isVisible ? showTopMemory : false
         )
         let totalMem = memoryTotal
         
         Task {
             let stats = await worker.fetchStats(interval: interval, options: options, totalMemory: totalMem)
-            self.cpuLoadPerCore = stats.cpuLoadPerCore
-            self.gpuLoad = stats.gpuLoad
-            self.memoryUsed = stats.memoryUsed
-            self.memorySwap = stats.memorySwap
-            self.memoryPressure = stats.memoryPressure
-            self.diskReadRate = stats.diskRead
-            self.diskWriteRate = stats.diskWrite
-            self.diskFree = stats.diskFree
-            self.diskTotal = stats.diskTotal
-            self.networkDownloadRate = stats.netDown
-            self.networkUploadRate = stats.netUp
-            self.batteryLevel = stats.batteryLevel
-            self.batteryIsCharging = stats.batteryIsCharging
-            self.batteryPowerUsage = stats.batteryPowerUsage
-            self.batteryAdapterWattage = stats.batteryAdapterWattage
-            self.batteryCycleCount = stats.batteryCycleCount
-            self.batteryHealth = stats.batteryHealth
-            self.uptime = stats.uptime
-            self.topCPU = stats.topCPU
-            self.topMemory = stats.topMemory
+            self.currentStats = stats
         }
     }
 }
