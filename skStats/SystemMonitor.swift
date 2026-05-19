@@ -58,7 +58,13 @@ struct SystemStats: Equatable {
 @MainActor
 class SystemMonitor: ObservableObject {
     @Published var currentStats: SystemStats? = nil
-    @Published var isPopoverVisible: Bool = false
+    @Published var isPopoverVisible: Bool = false {
+        didSet {
+            if isPopoverVisible && !oldValue {
+                updateStats()
+            }
+        }
+    }
     @Published var memoryTotal: Double = 0.0
     
     @AppStorage("showCPU") var showCPU: Bool = true
@@ -143,7 +149,14 @@ final class TelemetryWorker: @unchecked Sendable {
     private var previousNetworkBytesIn: UInt64 = 0
     private var previousNetworkBytesOut: UInt64 = 0
     private var previousProcessCPUTimes: [Int32: UInt64] = [:]
+    private var nameCache: [Int32: String] = [:]
     private var lastUpdateTime: Date = Date()
+    
+    private struct ProcessCandidate {
+        let pid: Int32
+        let sortValue: Double
+        let displayValue: String
+    }
     
     struct FetchOptions {
         let cpu: Bool
@@ -450,11 +463,15 @@ final class TelemetryWorker: @unchecked Sendable {
     
     private func fetchTopProcesses(showCPU: Bool, showMemory: Bool) -> (cpu: [TopProcess], memory: [TopProcess]) {
         let pids = getPIDs()
-        var cpuProcesses: [TopProcess] = []
-        var memProcesses: [TopProcess] = []
+        var cpuCandidates: [ProcessCandidate] = []
+        var memCandidates: [ProcessCandidate] = []
         let now = Date()
         let timeInterval = now.timeIntervalSince(lastUpdateTime)
         var currentTimes: [Int32: UInt64] = [:]
+        
+        // Prune name cache for dead processes
+        let currentPidsSet = Set(pids)
+        nameCache = nameCache.filter { currentPidsSet.contains($0.key) }
         
         for pid in pids {
             var usage = proc_taskinfo()
@@ -467,7 +484,7 @@ final class TelemetryWorker: @unchecked Sendable {
                         let delta = Double(totalTime >= prevTime ? totalTime - prevTime : 0)
                         let percentage = (delta / 1_000_000_000.0) / timeInterval * 100.0
                         if percentage > 0.1 {
-                            cpuProcesses.append(TopProcess(name: getName(pid: pid), value: String(format: "%.1f%%", percentage), sortValue: percentage))
+                            cpuCandidates.append(ProcessCandidate(pid: pid, sortValue: percentage, displayValue: String(format: "%.1f%%", percentage)))
                         }
                     }
                 }
@@ -476,7 +493,7 @@ final class TelemetryWorker: @unchecked Sendable {
                     let mem = usage.pti_resident_size
                     let mb = Double(mem) / 1024.0 / 1024.0
                     let formatValue = mb > 1024 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
-                    memProcesses.append(TopProcess(name: getName(pid: pid), value: formatValue, sortValue: Double(mem)))
+                    memCandidates.append(ProcessCandidate(pid: pid, sortValue: Double(mem), displayValue: formatValue))
                 }
             }
         }
@@ -485,9 +502,38 @@ final class TelemetryWorker: @unchecked Sendable {
             self.previousProcessCPUTimes = currentTimes
         }
         
+        // Sort and select top 3 candidates first
+        let topCPUCandidates = Array(cpuCandidates.sorted { $0.sortValue > $1.sortValue }.prefix(3))
+        let topMemCandidates = Array(memCandidates.sorted { $0.sortValue > $1.sortValue }.prefix(3))
+        
+        // Resolve names only for the top 3 processes
+        let cpuProcesses = topCPUCandidates.map { candidate -> TopProcess in
+            let name: String
+            if let cachedName = nameCache[candidate.pid] {
+                name = cachedName
+            } else {
+                let resolved = getName(pid: candidate.pid)
+                nameCache[candidate.pid] = resolved
+                name = resolved
+            }
+            return TopProcess(name: name, value: candidate.displayValue, sortValue: candidate.sortValue)
+        }
+        
+        let memProcesses = topMemCandidates.map { candidate -> TopProcess in
+            let name: String
+            if let cachedName = nameCache[candidate.pid] {
+                name = cachedName
+            } else {
+                let resolved = getName(pid: candidate.pid)
+                nameCache[candidate.pid] = resolved
+                name = resolved
+            }
+            return TopProcess(name: name, value: candidate.displayValue, sortValue: candidate.sortValue)
+        }
+        
         return (
-            cpu: Array(cpuProcesses.sorted { $0.sortValue > $1.sortValue }.prefix(3)),
-            memory: Array(memProcesses.sorted { $0.sortValue > $1.sortValue }.prefix(3))
+            cpu: cpuProcesses,
+            memory: memProcesses
         )
     }
     

@@ -12,14 +12,24 @@ struct ContentView: View {
                     .transition(.move(edge: .trailing))
             } else {
                 mainHeader
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 12) {
                     if let stats = monitor.currentStats {
                         if monitor.showCPU { CPUDashboard(cpuLoadPerCore: stats.cpuLoadPerCore) }
                         if monitor.showGPU { GPUDashboard(gpuLoad: stats.gpuLoad) }
                         if monitor.showMemory { MemoryDashboard(memoryUsed: stats.memoryUsed, memoryTotal: monitor.memoryTotal, memoryPressure: stats.memoryPressure, memorySwap: stats.memorySwap, showAdvancedMemory: monitor.showAdvancedMemory) }
                         if monitor.showBattery { BatteryDashboard(batteryLevel: stats.batteryLevel, batteryIsCharging: stats.batteryIsCharging, batteryPowerUsage: stats.batteryPowerUsage, batteryAdapterWattage: stats.batteryAdapterWattage, batteryCycleCount: stats.batteryCycleCount, batteryHealth: stats.batteryHealth) }
-                        if monitor.showDisk { DiskDashboard(diskReadRate: stats.diskRead, diskWriteRate: stats.diskWrite) }
-                        if monitor.showNetwork { NetworkDashboard(networkDownloadRate: stats.netDown, networkUploadRate: stats.netUp) }
+                        if monitor.showDisk || monitor.showNetwork {
+                            HStack(alignment: .top, spacing: 12) {
+                                if monitor.showDisk {
+                                    DiskDashboard(diskReadRate: stats.diskRead, diskWriteRate: stats.diskWrite)
+                                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                                }
+                                if monitor.showNetwork {
+                                    NetworkDashboard(networkDownloadRate: stats.netDown, networkUploadRate: stats.netUp)
+                                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                                }
+                            }
+                        }
                         if monitor.showSystemInfo { SystemInfoDashboard(diskFree: stats.diskFree, diskTotal: stats.diskTotal, uptime: stats.uptime) }
                         if monitor.showTopCPU && !stats.topCPU.isEmpty { TopCPUDashboard(topCPU: stats.topCPU) }
                         if monitor.showTopMemory && !stats.topMemory.isEmpty { TopMemoryDashboard(topMemory: stats.topMemory) }
@@ -142,7 +152,7 @@ struct GPUDashboard: View {
                     Text("\(Int(gpuLoad * 100))%")
                 }
                 .gaugeStyle(.accessoryLinearCapacity)
-                .tint(.purple)
+                .tint(LinearGradient(gradient: Gradient(colors: [.purple, .pink]), startPoint: .leading, endPoint: .trailing))
             }
         }
     }
@@ -164,7 +174,7 @@ struct MemoryDashboard: View {
                     Text(String(format: "%.1f GB / %.1f GB", memoryUsed / 1_000_000_000, memoryTotal / 1_000_000_000))
                 }
                 .gaugeStyle(.accessoryLinearCapacity)
-                .tint(.blue)
+                .tint(LinearGradient(gradient: Gradient(colors: [.blue, .teal]), startPoint: .leading, endPoint: .trailing))
                 
                 if showAdvancedMemory {
                     HStack(spacing: 20) {
@@ -243,7 +253,7 @@ struct SystemInfoDashboard: View {
                             Text(String(format: "Free: %@", FormatUtils.formatBytes(Double(diskFree))))
                         }
                         .gaugeStyle(.accessoryLinearCapacity)
-                        .tint(.gray)
+                        .tint(LinearGradient(gradient: Gradient(colors: [.gray, .secondary]), startPoint: .leading, endPoint: .trailing))
                         
                         Text(String(format: "Total: %@", FormatUtils.formatBytes(Double(diskTotal))))
                             .font(.system(size: 9))
@@ -276,10 +286,11 @@ struct DiskDashboard: View {
     
     var body: some View {
         DashboardSection(title: "Disk I/O", icon: "externaldrive") {
-            HStack(spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
                 StatView(label: "Read", value: FormatUtils.formatBytes(diskReadRate) + "/s", color: .green)
                 StatView(label: "Write", value: FormatUtils.formatBytes(diskWriteRate) + "/s", color: .orange)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -290,10 +301,11 @@ struct NetworkDashboard: View {
     
     var body: some View {
         DashboardSection(title: "Network", icon: "network") {
-            HStack(spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
                 StatView(label: "Down", value: FormatUtils.formatBytes(networkDownloadRate) + "/s", icon: "arrow.down", color: .blue)
                 StatView(label: "Up", value: FormatUtils.formatBytes(networkUploadRate) + "/s", icon: "arrow.up", color: .red)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -343,17 +355,22 @@ struct DashboardSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 12))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.accentColor)
                 Text(title)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
                     .textCase(.uppercase)
                     .foregroundColor(.secondary)
             }
             content
-            Divider()
-                .padding(.top, 4)
         }
+        .padding(12)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
     }
 }
 
