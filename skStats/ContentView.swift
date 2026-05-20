@@ -325,7 +325,7 @@ struct BatteryDashboard: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(FormatUtils.formatPercentage(batteryLevel))
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                    Text(batteryIsCharging ? "Charging (\(batteryAdapterWattage)W)" : "Discharging")
+                    Text(batteryIsCharging ? "Charging (\(batteryAdapterWattage)W) • \(String(format: "%.1fW", abs(batteryPowerUsage)))" : "Discharging")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(.secondary)
                 }
