@@ -9,132 +9,222 @@ struct ContentView: View {
             if isShowingSettings {
                 settingsHeader
                 SettingsView(monitor: monitor)
-                    .transition(.move(edge: .trailing))
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .trailing)))
             } else {
                 mainHeader
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
                     if let stats = monitor.currentStats {
-                        if monitor.showCPU { CPUDashboard(cpuLoadPerCore: stats.cpuLoadPerCore) }
-                        if monitor.showGPU { GPUDashboard(gpuLoad: stats.gpuLoad) }
-                        if monitor.showMemory { MemoryDashboard(memoryUsed: stats.memoryUsed, memoryTotal: monitor.memoryTotal, memoryPressure: stats.memoryPressure, memorySwap: stats.memorySwap, showAdvancedMemory: monitor.showAdvancedMemory) }
-                        if monitor.showBattery { BatteryDashboard(batteryLevel: stats.batteryLevel, batteryIsCharging: stats.batteryIsCharging, batteryPowerUsage: stats.batteryPowerUsage, batteryAdapterWattage: stats.batteryAdapterWattage, batteryCycleCount: stats.batteryCycleCount, batteryHealth: stats.batteryHealth) }
-                        if monitor.showDisk || monitor.showNetwork {
-                            HStack(alignment: .top, spacing: 12) {
-                                if monitor.showDisk {
-                                    DiskDashboard(diskReadRate: stats.diskRead, diskWriteRate: stats.diskWrite)
-                                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                                }
-                                if monitor.showNetwork {
-                                    NetworkDashboard(networkDownloadRate: stats.netDown, networkUploadRate: stats.netUp)
-                                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        Group {
+                            if monitor.showCPU { CPUDashboard(cpuLoadPerCore: stats.cpuLoadPerCore) }
+                            if monitor.showGPU { GPUDashboard(gpuLoad: stats.gpuLoad) }
+                            if monitor.showMemory { 
+                                MemoryDashboard(
+                                    memoryUsed: stats.memoryUsed, 
+                                    memoryTotal: monitor.memoryTotal, 
+                                    memoryPressure: stats.memoryPressure, 
+                                    memorySwap: stats.memorySwap, 
+                                    showAdvancedMemory: monitor.showAdvancedMemory
+                                ) 
+                            }
+                            if monitor.showBattery { 
+                                BatteryDashboard(
+                                    batteryLevel: stats.batteryLevel, 
+                                    batteryIsCharging: stats.batteryIsCharging, 
+                                    batteryPowerUsage: stats.batteryPowerUsage, 
+                                    batteryAdapterWattage: stats.batteryAdapterWattage, 
+                                    batteryCycleCount: stats.batteryCycleCount, 
+                                    batteryHealth: stats.batteryHealth
+                                ) 
+                            }
+                            if monitor.showDisk || monitor.showNetwork {
+                                HStack(alignment: .top, spacing: 6) {
+                                    if monitor.showDisk {
+                                        DiskDashboard(diskReadRate: stats.diskRead, diskWriteRate: stats.diskWrite)
+                                            .frame(maxWidth: .infinity)
+                                    }
+                                    if monitor.showNetwork {
+                                        NetworkDashboard(networkDownloadRate: stats.netDown, networkUploadRate: stats.netUp)
+                                            .frame(maxWidth: .infinity)
+                                    }
                                 }
                             }
+                            if monitor.showSystemInfo { 
+                                SystemInfoDashboard(diskFree: stats.diskFree, diskTotal: stats.diskTotal, uptime: stats.uptime) 
+                            }
+                            if monitor.showTopCPU && !stats.topCPU.isEmpty { TopCPUDashboard(topCPU: stats.topCPU) }
+                            if monitor.showTopMemory && !stats.topMemory.isEmpty { TopMemoryDashboard(topMemory: stats.topMemory) }
                         }
-                        if monitor.showSystemInfo { SystemInfoDashboard(diskFree: stats.diskFree, diskTotal: stats.diskTotal, uptime: stats.uptime) }
-                        if monitor.showTopCPU && !stats.topCPU.isEmpty { TopCPUDashboard(topCPU: stats.topCPU) }
-                        if monitor.showTopMemory && !stats.topMemory.isEmpty { TopMemoryDashboard(topMemory: stats.topMemory) }
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    } else {
+                        loadingPlaceholder
                     }
                 }
                 .padding(.horizontal)
-                .padding(.bottom, 16)
-                .transition(.move(edge: .leading))
+                .padding(.bottom, 20)
+                .transition(.asymmetric(insertion: .move(edge: .leading), removal: .move(edge: .leading)))
             }
         }
-        .frame(width: 320)
-        .background(VisualEffectView(material: .menu, blendingMode: .behindWindow))
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isShowingSettings)
+        .frame(width: 340)
+        .frame(minHeight: 400, maxHeight: 1200)
+        .fixedSize(horizontal: true, vertical: true)
+        .background {
+            VisualEffectView(material: .popover, blendingMode: .behindWindow)
+                .background(Color(NSColor.windowBackgroundColor).opacity(0.95))
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: isShowingSettings)
+        .animation(.easeInOut(duration: 0.5), value: monitor.currentStats)
         .onAppear { monitor.isPopoverVisible = true }
         .onDisappear { monitor.isPopoverVisible = false }
     }
     
     private var mainHeader: some View {
         HStack {
-            Text("skStats")
-                .font(.system(.headline, design: .rounded))
-                .foregroundColor(.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("skStats")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(LinearGradient(colors: [.accentColor, .blue], startPoint: .leading, endPoint: .trailing))
+                Text("System Monitor")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary)
+            }
             Spacer()
-            Button { isShowingSettings = true } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 13))
+            HStack(spacing: 12) {
+                Button { isShowingSettings = true } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Settings")
+                
+                Button { 
+                    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.ActivityMonitor") {
+                        NSWorkspace.shared.open(url)
+                    }
+                } label: {
+                    Image(systemName: "chart.bar.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open Activity Monitor")
+                
+                Button { NSApplication.shared.terminate(nil) } label: {
+                    Image(systemName: "power")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.red.opacity(0.8))
+                }
+                .buttonStyle(.plain)
+                .help("Quit skStats")
             }
-            .buttonStyle(.plain)
-            
-            Button { NSApplication.shared.terminate(nil) } label: {
-                Image(systemName: "power")
-                    .font(.system(size: 13))
-            }
-            .buttonStyle(.plain)
         }
-        .padding(.horizontal)
-        .padding(.top, 12)
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
         .padding(.bottom, 12)
     }
     
     private var settingsHeader: some View {
         HStack {
             Button { isShowingSettings = false } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     Image(systemName: "chevron.left")
                     Text("Back")
                 }
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 13, weight: .bold, design: .rounded))
             }
             .buttonStyle(.plain)
             Spacer()
             Text("Settings")
-                .font(.system(.headline, design: .rounded))
+                .font(.system(size: 15, weight: .bold, design: .rounded))
         }
-        .padding(.horizontal)
-        .padding(.top, 12)
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
         .padding(.bottom, 12)
     }
+    
+    private var loadingPlaceholder: some View {
+        VStack(spacing: 20) {
+            ProgressView()
+                .scaleEffect(0.8)
+            Text("Gathering telemetry...")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 400)
+    }
 }
 
-// 輔助：背景模糊效果
-struct VisualEffectView: NSViewRepresentable {
-    let material: NSVisualEffectView.Material
-    let blendingMode: NSVisualEffectView.BlendingMode
+// MARK: - Components
+
+struct DashboardSection<Content: View>: View {
+    let title: String
+    let icon: String
+    let content: Content
     
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = .active
-        return view
+    init(title: String, icon: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.icon = icon
+        self.content = content()
     }
     
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.accentColor)
+                Text(title)
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .textCase(.uppercase)
+                    .foregroundColor(.secondary.opacity(0.8))
+                    .kerning(0.5)
+            }
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(NSColor.windowBackgroundColor).opacity(0.3))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(LinearGradient(colors: [.white.opacity(0.2), .clear], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+                }
+        }
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+    }
 }
-
-// MARK: - Subcomponents
 
 struct CPUDashboard: View {
     let cpuLoadPerCore: [Double]
     
     var body: some View {
-        DashboardSection(title: "CPU Load", icon: "cpu") {
-            let count = cpuLoadPerCore.count
-            let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
-            LazyVGrid(columns: columns, spacing: 10) {
-                ForEach(0..<count, id: \.self) { index in
-                    let load = cpuLoadPerCore[index]
-                    VStack(spacing: 4) {
-                        Gauge(value: load) {
-                            Text("")
-                        } currentValueLabel: {
-                            Text("\(Int(load * 100))")
-                                .font(.system(size: 8, weight: .bold))
+        DashboardSection(title: "CPU", icon: "cpu") {
+            VStack(spacing: 12) {
+                let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+                LazyVGrid(columns: columns, spacing: 16) {
+                    ForEach(0..<cpuLoadPerCore.count, id: \.self) { index in
+                        let load = cpuLoadPerCore[index]
+                        VStack(spacing: 4) {
+                            ZStack {
+                                Gauge(value: load) {
+                                    Text("")
+                                }
+                                .gaugeStyle(.accessoryCircularCapacity)
+                                .tint(load > 0.8 ? .red : (load > 0.5 ? .orange : .accentColor))
+                                .frame(width: 38, height: 38)
+                                
+                                Text(String(format: "%.0f", load * 100))
+                                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                            }
+                            
+                            Text("Core \(index)")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.secondary)
                         }
-                        .gaugeStyle(.accessoryCircularCapacity)
-                        .scaleEffect(0.7)
-                        .frame(height: 30)
-                        .tint(load > 0.9 ? .red : (load > 0.7 ? .orange : .green))
-                        
-                        Text("Core \(index)")
-                            .font(.system(size: 8))
-                            .foregroundColor(.secondary)
                     }
                 }
+                .padding(.top, 2)
             }
         }
     }
@@ -144,15 +234,23 @@ struct GPUDashboard: View {
     let gpuLoad: Double
     
     var body: some View {
-        DashboardSection(title: "GPU Load", icon: "cpu.fill") {
-            HStack {
+        DashboardSection(title: "GPU", icon: "square.grid.3x3.fill") {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Current Load")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(FormatUtils.formatPercentage(gpuLoad))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                }
+                
                 Gauge(value: gpuLoad) {
-                    Text("GPU")
-                } currentValueLabel: {
-                    Text("\(Int(gpuLoad * 100))%")
+                    Text("")
                 }
                 .gaugeStyle(.accessoryLinearCapacity)
-                .tint(LinearGradient(gradient: Gradient(colors: [.purple, .pink]), startPoint: .leading, endPoint: .trailing))
+                .tint(LinearGradient(colors: [.purple, .indigo, .blue], startPoint: .leading, endPoint: .trailing))
+                .frame(height: 8)
             }
         }
     }
@@ -168,19 +266,32 @@ struct MemoryDashboard: View {
     var body: some View {
         DashboardSection(title: "Memory", icon: "memorychip") {
             VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Usage")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    HStack(spacing: 2) {
+                        Text(String(format: "%.1f", memoryUsed / 1_000_000_000))
+                        Text("/")
+                        Text(String(format: "%.0f GB", memoryTotal / 1_000_000_000))
+                    }
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                }
+                
                 Gauge(value: memoryUsed, in: 0...memoryTotal) {
-                    Text("Memory")
-                } currentValueLabel: {
-                    Text(String(format: "%.1f GB / %.1f GB", memoryUsed / 1_000_000_000, memoryTotal / 1_000_000_000))
+                    Text("")
                 }
                 .gaugeStyle(.accessoryLinearCapacity)
-                .tint(LinearGradient(gradient: Gradient(colors: [.blue, .teal]), startPoint: .leading, endPoint: .trailing))
+                .tint(LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing))
+                .frame(height: 8)
                 
                 if showAdvancedMemory {
-                    HStack(spacing: 20) {
-                        StatView(label: "Pressure", value: String(format: "%.0f%%", memoryPressure), color: memoryPressure > 80 ? .red : (memoryPressure > 50 ? .orange : .green))
+                    HStack(spacing: 24) {
+                        StatView(label: "Pressure", value: String(format: "%.0f%%", memoryPressure), color: memoryPressure > 75 ? .red : (memoryPressure > 50 ? .orange : .green))
                         StatView(label: "Swap", value: FormatUtils.formatBytes(memorySwap), color: .secondary)
                     }
+                    .padding(.top, 4)
                 }
             }
         }
@@ -196,41 +307,72 @@ struct BatteryDashboard: View {
     let batteryHealth: Double
     
     var body: some View {
-        DashboardSection(title: "Battery", icon: "battery.100") {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) {
+        DashboardSection(title: "Battery", icon: "bolt.fill") {
+            HStack(alignment: .center, spacing: 12) {
+                ZStack {
                     Gauge(value: batteryLevel) {
-                        Text("Battery")
-                    } currentValueLabel: {
-                        Text("\(Int(batteryLevel * 100))%")
+                        Text("")
                     }
                     .gaugeStyle(.accessoryCircularCapacity)
                     .tint(batteryLevel < 0.2 ? .red : .green)
-                    .scaleEffect(0.8)
-                    .frame(width: 40, height: 40)
+                    .frame(width: 44, height: 44)
                     
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(batteryIsCharging ? "Charging" : "Discharging")
-                            .font(.system(size: 11, weight: .bold))
-                        if batteryPowerUsage != 0 {
-                            Text(String(format: "%@: %.1f W", batteryPowerUsage > 0 ? "Rate" : "Power", abs(batteryPowerUsage)))
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
-                        if batteryAdapterWattage > 0 {
-                            Text("Adapter: \(batteryAdapterWattage)W")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
+                    Image(systemName: batteryIsCharging ? "bolt.fill" : "battery.100")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(batteryIsCharging ? .yellow : .primary)
+                }
+                
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(FormatUtils.formatPercentage(batteryLevel))
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                    Text(batteryIsCharging ? "Charging (\(batteryAdapterWattage)W)" : "Discharging")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 3) {
+                    if batteryPowerUsage != 0 {
+                        Text(String(format: "%.1f W", abs(batteryPowerUsage)))
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
                     }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(String(format: "Health: %.0f%%", batteryHealth * 100))
+                    HStack(spacing: 6) {
+                        Text("Health: \(Int(batteryHealth * 100))%")
+                        Text("•")
                         Text("Cycles: \(batteryCycleCount)")
                     }
                     .font(.system(size: 9))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.secondary.opacity(0.8))
                 }
+            }
+        }
+    }
+}
+
+struct DiskDashboard: View {
+    let diskReadRate: Double
+    let diskWriteRate: Double
+    
+    var body: some View {
+        DashboardSection(title: "Disk", icon: "internaldrive") {
+            VStack(alignment: .leading, spacing: 8) {
+                StatView(label: "Read", value: FormatUtils.formatRate(diskReadRate), icon: "arrow.down.circle", color: .green)
+                StatView(label: "Write", value: FormatUtils.formatRate(diskWriteRate), icon: "arrow.up.circle", color: .orange)
+            }
+        }
+    }
+}
+
+struct NetworkDashboard: View {
+    let networkDownloadRate: Double
+    let networkUploadRate: Double
+    
+    var body: some View {
+        DashboardSection(title: "Network", icon: "wifi") {
+            VStack(alignment: .leading, spacing: 8) {
+                StatView(label: "Down", value: FormatUtils.formatRate(networkDownloadRate), icon: "arrow.down.square", color: .blue)
+                StatView(label: "Up", value: FormatUtils.formatRate(networkUploadRate), icon: "arrow.up.square", color: .rose)
             }
         }
     }
@@ -242,32 +384,33 @@ struct SystemInfoDashboard: View {
     let uptime: TimeInterval
     
     var body: some View {
-        DashboardSection(title: "System Info", icon: "info.circle") {
-            VStack(alignment: .leading, spacing: 6) {
+        DashboardSection(title: "System Stats", icon: "info.circle.fill") {
+            VStack(alignment: .leading, spacing: 10) {
                 if diskTotal > 0 {
-                    VStack(alignment: .leading, spacing: 2) {
-                        let used = diskTotal - diskFree
-                        Gauge(value: Double(used), in: 0...Double(diskTotal)) {
-                            Text("Disk")
-                        } currentValueLabel: {
-                            Text(String(format: "Free: %@", FormatUtils.formatBytes(Double(diskFree))))
+                    let used = diskTotal - diskFree
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Disk Space")
+                                .font(.system(size: 10, weight: .semibold))
+                            Spacer()
+                            Text("\(FormatUtils.formatBytes(Double(diskFree))) free")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
                         }
-                        .gaugeStyle(.accessoryLinearCapacity)
-                        .tint(LinearGradient(gradient: Gradient(colors: [.gray, .secondary]), startPoint: .leading, endPoint: .trailing))
-                        
-                        Text(String(format: "Total: %@", FormatUtils.formatBytes(Double(diskTotal))))
-                            .font(.system(size: 9))
-                            .foregroundColor(.secondary)
+                        ProgressView(value: Double(used), total: Double(diskTotal))
+                            .progressViewStyle(.linear)
+                            .tint(Color.primary.opacity(0.6))
                     }
                 }
                 
                 HStack {
-                    Image(systemName: "clock")
-                        .font(.system(size: 10))
-                    Text("Uptime: \(formatUptime(uptime))")
+                    Label("Uptime", systemImage: "clock")
+                        .font(.system(size: 10, weight: .semibold))
+                    Spacer()
+                    Text(formatUptime(uptime))
                         .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
                 }
-                .foregroundColor(.secondary)
             }
         }
     }
@@ -280,44 +423,15 @@ struct SystemInfoDashboard: View {
     }
 }
 
-struct DiskDashboard: View {
-    let diskReadRate: Double
-    let diskWriteRate: Double
-    
-    var body: some View {
-        DashboardSection(title: "Disk I/O", icon: "externaldrive") {
-            VStack(alignment: .leading, spacing: 6) {
-                StatView(label: "Read", value: FormatUtils.formatBytes(diskReadRate) + "/s", color: .green)
-                StatView(label: "Write", value: FormatUtils.formatBytes(diskWriteRate) + "/s", color: .orange)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-struct NetworkDashboard: View {
-    let networkDownloadRate: Double
-    let networkUploadRate: Double
-    
-    var body: some View {
-        DashboardSection(title: "Network", icon: "network") {
-            VStack(alignment: .leading, spacing: 6) {
-                StatView(label: "Down", value: FormatUtils.formatBytes(networkDownloadRate) + "/s", icon: "arrow.down", color: .blue)
-                StatView(label: "Up", value: FormatUtils.formatBytes(networkUploadRate) + "/s", icon: "arrow.up", color: .red)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
 struct TopCPUDashboard: View {
     let topCPU: [TopProcess]
     
     var body: some View {
-        DashboardSection(title: "Top CPU", icon: "list.bullet.rectangle") {
-            VStack(spacing: 6) {
+        DashboardSection(title: "Active Processes", icon: "list.bullet.rectangle.stack") {
+            VStack(spacing: 8) {
+                let maxCPU = topCPU.first?.sortValue ?? 100.0
                 ForEach(topCPU) { process in
-                    ProcessRow(name: process.name, value: process.value)
+                    ProcessRow(name: process.name, value: process.value, load: process.sortValue / max(maxCPU, 1.0), color: .accentColor)
                 }
             }
         }
@@ -328,10 +442,11 @@ struct TopMemoryDashboard: View {
     let topMemory: [TopProcess]
     
     var body: some View {
-        DashboardSection(title: "Top Memory", icon: "list.bullet.indent") {
-            VStack(spacing: 6) {
+        DashboardSection(title: "Memory Hoggers", icon: "memorychip.fill") {
+            VStack(spacing: 8) {
+                let maxMem = topMemory.first?.sortValue ?? 1.0
                 ForEach(topMemory) { process in
-                    ProcessRow(name: process.name, value: process.value)
+                    ProcessRow(name: process.name, value: process.value, load: process.sortValue / max(maxMem, 1.0), color: .cyan)
                 }
             }
         }
@@ -340,7 +455,152 @@ struct TopMemoryDashboard: View {
 
 // MARK: - UI Helpers
 
-struct DashboardSection<Content: View>: View {
+struct StatView: View {
+    let label: String
+    let value: String
+    var icon: String? = nil
+    let color: Color
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            if let icon = icon {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .foregroundColor(color)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                Text(label)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.secondary.opacity(0.8))
+                Text(value)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(color)
+            }
+        }
+    }
+}
+
+struct ProcessRow: View {
+    let name: String
+    let value: String
+    let load: Double
+    let color: Color
+    
+    var body: some View {
+        HStack {
+            Text(name)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+            Spacer()
+            Text(value)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundColor(color)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(color.opacity(0.1))
+                            
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(color.opacity(0.2))
+                                .frame(width: geo.size.width * CGFloat(load))
+                        }
+                    }
+                )
+                .cornerRadius(6)
+        }
+    }
+}
+
+extension Color {
+    static let rose = Color(red: 255/255, green: 51/255, blue: 102/255)
+}
+
+struct VisualEffectView: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+    let blendingMode: NSVisualEffectView.BlendingMode
+    
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+// MARK: - Settings
+
+struct SettingsView: View {
+    @ObservedObject var monitor: SystemMonitor
+    
+    var body: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 20) {
+                SettingsGroup(title: "Menu Bar", icon: "menubar.rectangle") {
+                    Toggle("Show Real-time Info", isOn: $monitor.showMenuBarText)
+                    
+                    if monitor.showMenuBarText {
+                        Picker("Display Mode", selection: $monitor.showMenuBarMode) {
+                            ForEach(MenuBarDisplayMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+                }
+                
+                SettingsGroup(title: "General", icon: "gearshape.fill") {
+                    Toggle("Launch at Login", isOn: $monitor.launchAtLogin)
+                        .onChange(of: monitor.launchAtLogin) { _ in
+                            monitor.toggleLaunchAtLogin()
+                        }
+                }
+                
+                SettingsGroup(title: "Visibility", icon: "eye.fill") {
+                    let columns = [GridItem(.flexible()), GridItem(.flexible())]
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+                        Toggle("CPU", isOn: $monitor.showCPU)
+                        Toggle("GPU", isOn: $monitor.showGPU)
+                        Toggle("RAM", isOn: $monitor.showMemory)
+                        Toggle("Battery", isOn: $monitor.showBattery)
+                        Toggle("Disk", isOn: $monitor.showDisk)
+                        Toggle("Net", isOn: $monitor.showNetwork)
+                        Toggle("Sys Info", isOn: $monitor.showSystemInfo)
+                        Toggle("Top CPU", isOn: $monitor.showTopCPU)
+                        Toggle("Top RAM", isOn: $monitor.showTopMemory)
+                        Toggle("Adv RAM", isOn: $monitor.showAdvancedMemory)
+                    }
+                    .toggleStyle(.checkbox)
+                }
+                
+                SettingsGroup(title: "Updates", icon: "timer") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Refresh Rate")
+                            Spacer()
+                            Text("\(Int(monitor.updateInterval))s")
+                                .bold()
+                                .foregroundColor(.accentColor)
+                        }
+                        Slider(value: $monitor.updateInterval, in: 1...10, step: 1.0)
+                            .tint(.accentColor)
+                    }
+                }
+            }
+            .padding(20)
+        }
+        .onChange(of: monitor.updateInterval) { _ in
+            monitor.startMonitoring()
+        }
+    }
+}
+
+struct SettingsGroup<Content: View>: View {
     let title: String
     let icon: String
     let content: Content
@@ -352,132 +612,18 @@ struct DashboardSection<Content: View>: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.accentColor)
-                Text(title)
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .textCase(.uppercase)
-                    .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundColor(.primary.opacity(0.8))
+            
+            VStack(alignment: .leading, spacing: 10) {
+                content
             }
-            content
-        }
-        .padding(12)
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-        )
-    }
-}
-
-struct StatView: View {
-    let label: String
-    let value: String
-    var icon: String? = nil
-    let color: Color
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                if let icon = icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 8))
-                }
-                Text(label)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary)
-            }
-            Text(value)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(color)
-        }
-    }
-}
-
-struct ProcessRow: View {
-    let name: String
-    let value: String
-    
-    var body: some View {
-        HStack {
-            Text(name)
-                .font(.system(size: 11))
-                .lineLimit(1)
-            Spacer()
-            Text(value)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(.secondary)
-        }
-    }
-}
-
-// MARK: - Settings
-
-struct SettingsView: View {
-    @ObservedObject var monitor: SystemMonitor
-    
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Toggle("Dynamic MenuBar Text", isOn: $monitor.showMenuBarText)
-                            .fontWeight(.medium)
-                        
-                        Picker("Display Stat:", selection: $monitor.showMenuBarMode) {
-                            ForEach(MenuBarDisplayMode.allCases) { mode in
-                                Text(mode.rawValue).tag(mode)
-                            }
-                        }
-                        .disabled(!monitor.showMenuBarText)
-                    }
-                    .padding(4)
-                } label: {
-                    Label("Menu Bar", systemImage: "menubar.rectangle")
-                }
-                
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle("CPU Load", isOn: $monitor.showCPU)
-                        Toggle("GPU Load", isOn: $monitor.showGPU)
-                        Toggle("Memory Usage", isOn: $monitor.showMemory)
-                        Toggle("Advanced Memory", isOn: $monitor.showAdvancedMemory)
-                        Toggle("Battery Status", isOn: $monitor.showBattery)
-                        Toggle("Disk I/O", isOn: $monitor.showDisk)
-                        Toggle("Network Speed", isOn: $monitor.showNetwork)
-                        Toggle("System Info", isOn: $monitor.showSystemInfo)
-                        Toggle("Top CPU Processes", isOn: $monitor.showTopCPU)
-                        Toggle("Top Memory Processes", isOn: $monitor.showTopMemory)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(4)
-                } label: {
-                    Label("Visibility", systemImage: "eye")
-                }
-                
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Refresh every")
-                            Text("\(Int(monitor.updateInterval))s")
-                                .bold()
-                                .foregroundColor(.accentColor)
-                        }
-                        Slider(value: $monitor.updateInterval, in: 1...10, step: 1.0)
-                    }
-                    .padding(4)
-                } label: {
-                    Label("Updates", systemImage: "timer")
-                }
-            }
-            .padding()
-        }
-        .onChange(of: monitor.updateInterval) { _ in
-            monitor.startMonitoring()
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .cornerRadius(12)
         }
     }
 }

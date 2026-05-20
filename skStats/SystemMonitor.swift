@@ -6,6 +6,7 @@ import IOKit
 import IOKit.storage
 import IOKit.network
 import IOKit.ps
+import ServiceManagement
 
 enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     case cpu = "CPU"
@@ -82,7 +83,10 @@ class SystemMonitor: ObservableObject {
     @AppStorage("showMenuBarText") var showMenuBarText: Bool = true
     @AppStorage("updateInterval") var updateInterval: Double = 3.0
     
+    @Published var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
+    
     private var timer: AnyCancellable?
+    private var debounceTask: Task<Void, Never>?
     private let worker = TelemetryWorker()
     
     init() {
@@ -91,16 +95,43 @@ class SystemMonitor: ObservableObject {
     }
     
     func startMonitoring() {
-        timer?.cancel()
-        updateStats()
-        timer = Timer.publish(every: updateInterval, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                self?.updateStats()
+        debounceTask?.cancel()
+        debounceTask = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            
+            await MainActor.run {
+                timer?.cancel()
+                updateStats()
+                timer = Timer.publish(every: updateInterval, on: .main, in: .common)
+                    .autoconnect()
+                    .sink { [weak self] _ in
+                        self?.updateStats()
+                    }
             }
+        }
     }
     
+    func toggleLaunchAtLogin() {
+        do {
+            if launchAtLogin {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            print("Failed to update launch at login status: \(error)")
+            // Rollback on failure
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+        }
+    }
+    
+    private var isUpdating = false
+    
     func updateStats() {
+        guard !isUpdating else { return }
+        isUpdating = true
+        
         let interval = updateInterval
         let isVisible = isPopoverVisible
         let options = TelemetryWorker.FetchOptions(
@@ -119,7 +150,10 @@ class SystemMonitor: ObservableObject {
         
         Task {
             let stats = await worker.fetchStats(interval: interval, options: options, totalMemory: totalMem)
-            self.currentStats = stats
+            await MainActor.run {
+                self.currentStats = stats
+                self.isUpdating = false
+            }
         }
     }
 }
@@ -127,7 +161,7 @@ class SystemMonitor: ObservableObject {
 // MARK: - Utilities
 
 struct FormatUtils {
-    private static let formatter: ByteCountFormatter = {
+    private static let byteFormatter: ByteCountFormatter = {
         let f = ByteCountFormatter()
         f.allowedUnits = [.useKB, .useMB, .useGB]
         f.countStyle = .memory
@@ -137,12 +171,24 @@ struct FormatUtils {
 
     static func formatBytes(_ bytes: Double) -> String {
         if bytes < 1024 { return String(format: "%.0f B", bytes) }
-        return formatter.string(fromByteCount: Int64(bytes))
+        return byteFormatter.string(fromByteCount: Int64(bytes))
+    }
+    
+    static func formatRate(_ bytesPerSecond: Double) -> String {
+        let kbps = bytesPerSecond / 1024.0
+        if kbps < 1024 {
+            return String(format: "%.1f KB/s", kbps)
+        }
+        let mbps = kbps / 1024.0
+        return String(format: "%.1f MB/s", mbps)
+    }
+    
+    static func formatPercentage(_ value: Double) -> String {
+        return String(format: "%.0f%%", value * 100)
     }
 }
 
-final class TelemetryWorker: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "com.skStats.telemetry", qos: .utility)
+actor TelemetryWorker {
     private var previousCPUTicks: [processor_cpu_load_info] = []
     private var previousDiskBytesRead: UInt64 = 0
     private var previousDiskBytesWritten: UInt64 = 0
@@ -151,6 +197,7 @@ final class TelemetryWorker: @unchecked Sendable {
     private var previousProcessCPUTimes: [Int32: UInt64] = [:]
     private var nameCache: [Int32: String] = [:]
     private var lastUpdateTime: Date = Date()
+    private var pruningCounter: Int = 0
     
     private struct ProcessCandidate {
         let pid: Int32
@@ -172,76 +219,65 @@ final class TelemetryWorker: @unchecked Sendable {
     }
     
     func fetchStats(interval: Double, options: FetchOptions, totalMemory: Double) async -> SystemStats {
-        return await withCheckedContinuation { continuation in
-            queue.async { [weak self] in
-                guard let self = self else {
-                    continuation.resume(returning: SystemStats(cpuLoadPerCore: [], gpuLoad: 0, memoryUsed: 0, memorySwap: 0, memoryPressure: 0, diskRead: 0, diskWrite: 0, diskFree: 0, diskTotal: 0, netUp: 0, netDown: 0, batteryLevel: 0, batteryIsCharging: false, batteryPowerUsage: 0, batteryAdapterWattage: 0, batteryCycleCount: 0, batteryHealth: 0, uptime: 0, topCPU: [], topMemory: []))
-                    return
-                }
-                
-                var cpu: [Double] = []
-                var gpu: Double = 0
-                var mem: Double = 0
-                var swap: Double = 0
-                var pressure: Double = 0
-                var disk: (read: Double, write: Double) = (0, 0)
-                var diskSpace: (free: Int64, total: Int64) = (0, 0)
-                var net: (up: Double, down: Double) = (0, 0)
-                var battery: (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double) = (0, false, 0, 0, 0, 0)
-                var uptime: TimeInterval = 0
-                var topCPU: [TopProcess] = []
-                var topMem: [TopProcess] = []
-                
-                if options.cpu { cpu = self.fetchCPU() }
-                if options.gpu { gpu = self.fetchGPU() }
-                if options.memory || options.topMemory || options.advancedMemory {
-                    mem = self.fetchMemory(totalMemory: totalMemory)
-                    if options.advancedMemory {
-                        swap = self.fetchSwap()
-                        pressure = self.fetchMemoryPressure()
-                    }
-                }
-                if options.disk { disk = self.fetchDisk(interval: interval) }
-                if options.systemInfo {
-                    diskSpace = self.fetchDiskSpace()
-                    uptime = self.fetchUptime()
-                }
-                if options.network { net = self.fetchNetwork(interval: interval) }
-                if options.battery { battery = self.fetchBattery() }
-                if options.topCPU || options.topMemory {
-                    let results = self.fetchTopProcesses(showCPU: options.topCPU, showMemory: options.topMemory)
-                    topCPU = results.cpu
-                    topMem = results.memory
-                }
-                
-                self.lastUpdateTime = Date()
-                
-                let stats = SystemStats(
-                    cpuLoadPerCore: cpu,
-                    gpuLoad: gpu,
-                    memoryUsed: mem,
-                    memorySwap: swap,
-                    memoryPressure: pressure,
-                    diskRead: disk.read,
-                    diskWrite: disk.write,
-                    diskFree: diskSpace.free,
-                    diskTotal: diskSpace.total,
-                    netUp: net.up,
-                    netDown: net.down,
-                    batteryLevel: battery.level,
-                    batteryIsCharging: battery.isCharging,
-                    batteryPowerUsage: battery.usage,
-                    batteryAdapterWattage: battery.adapter,
-                    batteryCycleCount: battery.cycles,
-                    batteryHealth: battery.health,
-                    uptime: uptime,
-                    topCPU: topCPU,
-                    topMemory: topMem
-                )
-                
-                continuation.resume(returning: stats)
+        var cpu: [Double] = []
+        var gpu: Double = 0
+        var mem: Double = 0
+        var swap: Double = 0
+        var pressure: Double = 0
+        var disk: (read: Double, write: Double) = (0, 0)
+        var diskSpace: (free: Int64, total: Int64) = (0, 0)
+        var net: (up: Double, down: Double) = (0, 0)
+        var battery: (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double) = (0, false, 0, 0, 0, 0)
+        var uptime: TimeInterval = 0
+        var topCPU: [TopProcess] = []
+        var topMem: [TopProcess] = []
+        
+        if options.cpu { cpu = fetchCPU() }
+        if options.gpu { gpu = fetchGPU() }
+        if options.memory || options.topMemory || options.advancedMemory {
+            mem = fetchMemory(totalMemory: totalMemory)
+            if options.advancedMemory {
+                swap = fetchSwap()
+                pressure = fetchMemoryPressure()
             }
         }
+        if options.disk { disk = fetchDisk(interval: interval) }
+        if options.systemInfo {
+            diskSpace = fetchDiskSpace()
+            uptime = fetchUptime()
+        }
+        if options.network { net = fetchNetwork(interval: interval) }
+        if options.battery { battery = fetchBattery() }
+        if options.topCPU || options.topMemory {
+            let results = fetchTopProcesses(showCPU: options.topCPU, showMemory: options.topMemory)
+            topCPU = results.cpu
+            topMem = results.memory
+        }
+        
+        self.lastUpdateTime = Date()
+        
+        return SystemStats(
+            cpuLoadPerCore: cpu,
+            gpuLoad: gpu,
+            memoryUsed: mem,
+            memorySwap: swap,
+            memoryPressure: pressure,
+            diskRead: disk.read,
+            diskWrite: disk.write,
+            diskFree: diskSpace.free,
+            diskTotal: diskSpace.total,
+            netUp: net.up,
+            netDown: net.down,
+            batteryLevel: battery.level,
+            batteryIsCharging: battery.isCharging,
+            batteryPowerUsage: battery.usage,
+            batteryAdapterWattage: battery.adapter,
+            batteryCycleCount: battery.cycles,
+            batteryHealth: battery.health,
+            uptime: uptime,
+            topCPU: topCPU,
+            topMemory: topMem
+        )
     }
     
     private func fetchSwap() -> Double {
@@ -466,12 +502,16 @@ final class TelemetryWorker: @unchecked Sendable {
         var cpuCandidates: [ProcessCandidate] = []
         var memCandidates: [ProcessCandidate] = []
         let now = Date()
-        let timeInterval = now.timeIntervalSince(lastUpdateTime)
+        let timeInterval = max(now.timeIntervalSince(lastUpdateTime), 0.1)
         var currentTimes: [Int32: UInt64] = [:]
         
-        // Prune name cache for dead processes
-        let currentPidsSet = Set(pids)
-        nameCache = nameCache.filter { currentPidsSet.contains($0.key) }
+        // Prune name cache for dead processes less frequently
+        pruningCounter += 1
+        if pruningCounter >= 10 {
+            let currentPidsSet = Set(pids)
+            nameCache = nameCache.filter { currentPidsSet.contains($0.key) }
+            pruningCounter = 0
+        }
         
         for pid in pids {
             var usage = proc_taskinfo()
@@ -502,38 +542,20 @@ final class TelemetryWorker: @unchecked Sendable {
             self.previousProcessCPUTimes = currentTimes
         }
         
-        // Sort and select top 3 candidates first
-        let topCPUCandidates = Array(cpuCandidates.sorted { $0.sortValue > $1.sortValue }.prefix(3))
-        let topMemCandidates = Array(memCandidates.sorted { $0.sortValue > $1.sortValue }.prefix(3))
+        // Sort and select top candidates
+        let topCPUCandidates = cpuCandidates.sorted { $0.sortValue > $1.sortValue }.prefix(3)
+        let topMemCandidates = memCandidates.sorted { $0.sortValue > $1.sortValue }.prefix(3)
         
-        // Resolve names only for the top 3 processes
-        let cpuProcesses = topCPUCandidates.map { candidate -> TopProcess in
-            let name: String
-            if let cachedName = nameCache[candidate.pid] {
-                name = cachedName
-            } else {
-                let resolved = getName(pid: candidate.pid)
-                nameCache[candidate.pid] = resolved
-                name = resolved
-            }
-            return TopProcess(name: name, value: candidate.displayValue, sortValue: candidate.sortValue)
-        }
-        
-        let memProcesses = topMemCandidates.map { candidate -> TopProcess in
-            let name: String
-            if let cachedName = nameCache[candidate.pid] {
-                name = cachedName
-            } else {
-                let resolved = getName(pid: candidate.pid)
-                nameCache[candidate.pid] = resolved
-                name = resolved
-            }
-            return TopProcess(name: name, value: candidate.displayValue, sortValue: candidate.sortValue)
+        let resolveName = { (pid: Int32) -> String in
+            if let cached = self.nameCache[pid] { return cached }
+            let name = self.getName(pid: pid)
+            self.nameCache[pid] = name
+            return name
         }
         
         return (
-            cpu: cpuProcesses,
-            memory: memProcesses
+            cpu: topCPUCandidates.map { TopProcess(name: resolveName($0.pid), value: $0.displayValue, sortValue: $0.sortValue) },
+            memory: topMemCandidates.map { TopProcess(name: resolveName($0.pid), value: $0.displayValue, sortValue: $0.sortValue) }
         )
     }
     
