@@ -67,6 +67,7 @@ class SystemMonitor: ObservableObject {
         }
     }
     @Published var memoryTotal: Double = 0.0
+    @Published var hasBattery: Bool = false
     
     @AppStorage("showCPU") var showCPU: Bool = true
     @AppStorage("showGPU") var showGPU: Bool = true
@@ -91,7 +92,23 @@ class SystemMonitor: ObservableObject {
     
     init() {
         self.memoryTotal = Double(ProcessInfo.processInfo.physicalMemory)
+        self.hasBattery = checkBatteryPresence()
         startMonitoring()
+    }
+    
+    private func checkBatteryPresence() -> Bool {
+        let matchingDict = IOServiceMatching("AppleSmartBattery")
+        var iterator: io_iterator_t = 0
+        if IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &iterator) == kIOReturnSuccess {
+            let service = IOIteratorNext(iterator)
+            if service != 0 {
+                IOObjectRelease(service)
+                IOObjectRelease(iterator)
+                return true
+            }
+            IOObjectRelease(iterator)
+        }
+        return false
     }
     
     func startMonitoring() {
@@ -186,6 +203,15 @@ struct FormatUtils {
     static func formatPercentage(_ value: Double) -> String {
         return String(format: "%.0f%%", value * 100)
     }
+    
+    static func formatCompactRate(_ bytesPerSecond: Double) -> String {
+        let kbps = bytesPerSecond / 1024.0
+        if kbps < 1024 {
+            return String(format: "%.0fK", kbps)
+        }
+        let mbps = kbps / 1024.0
+        return String(format: "%.1fM", mbps)
+    }
 }
 
 final class TelemetryWorker: @unchecked Sendable {
@@ -258,7 +284,7 @@ final class TelemetryWorker: @unchecked Sendable {
                     diskSpace = self.fetchDiskSpace()
                     uptime = self.fetchUptime()
                 }
-                if options.network { net = self.fetchNetwork(interval: realInterval) }
+                if options.network { net = self.fetchNetwork64(interval: realInterval) }
                 if options.battery { battery = self.fetchBattery() }
                 if options.topCPU || options.topMemory {
                     let results = self.fetchTopProcesses(interval: realInterval, showCPU: options.topCPU, showMemory: options.topMemory)
@@ -413,6 +439,44 @@ final class TelemetryWorker: @unchecked Sendable {
         return (readRate, writeRate)
     }
     
+    private func fetchNetwork64(interval: Double) -> (up: Double, down: Double) {
+        var mib = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
+        var len = 0
+        if sysctl(&mib, 6, nil, &len, nil, 0) < 0 {
+            return fetchNetwork(interval: interval)
+        }
+        
+        var buf = [CChar](repeating: 0, count: len)
+        if sysctl(&mib, 6, &buf, &len, nil, 0) < 0 {
+            return fetchNetwork(interval: interval)
+        }
+        
+        var bytesIn: UInt64 = 0
+        var bytesOut: UInt64 = 0
+        
+        var offset = 0
+        while offset < len {
+            let ptr = buf.withUnsafeBufferPointer { $0.baseAddress! + offset }
+            let ifm = ptr.withMemoryRebound(to: if_msghdr2.self, capacity: 1) { $0.pointee }
+            
+            if ifm.ifm_type == UInt8(RTM_IFINFO2) {
+                bytesIn += ifm.ifm_data.ifi_ibytes
+                bytesOut += ifm.ifm_data.ifi_obytes
+            }
+            offset += Int(ifm.ifm_msglen)
+        }
+        
+        var up: Double = 0
+        var down: Double = 0
+        if previousNetworkBytesIn > 0 {
+            down = Double(bytesIn >= previousNetworkBytesIn ? bytesIn - previousNetworkBytesIn : 0) / interval
+            up = Double(bytesOut >= previousNetworkBytesOut ? bytesOut - previousNetworkBytesOut : 0) / interval
+        }
+        self.previousNetworkBytesIn = bytesIn
+        self.previousNetworkBytesOut = bytesOut
+        return (up, down)
+    }
+
     private func fetchNetwork(interval: Double) -> (up: Double, down: Double) {
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return (0, 0) }
@@ -509,7 +573,7 @@ final class TelemetryWorker: @unchecked Sendable {
                 if IORegistryEntryCreateCFProperties(service, &properties, kCFAllocatorDefault, 0) == kIOReturnSuccess,
                    let props = properties?.takeRetainedValue() as? [String: Any],
                    let perfStats = props["PerformanceStatistics"] as? [String: Any] {
-                    if let utilization = perfStats["Device Utilization %"] as? NSNumber {
+                    if let utilization = (perfStats["Device Utilization %"] as? NSNumber) ?? (perfStats["Device Utilization"] as? NSNumber) {
                         IOObjectRelease(service)
                         IOObjectRelease(matchIterator)
                         return utilization.doubleValue / 100.0
@@ -529,11 +593,12 @@ final class TelemetryWorker: @unchecked Sendable {
         var memCandidates: [ProcessCandidate] = []
         var currentTimes: [Int32: UInt64] = [:]
         
-        // Prune name cache for dead processes less frequently
+        // Prune name cache and CPU times for dead processes less frequently
         pruningCounter += 1
         if pruningCounter >= 10 {
             let currentPidsSet = Set(pids)
             nameCache = nameCache.filter { currentPidsSet.contains($0.key) }
+            previousProcessCPUTimes = previousProcessCPUTimes.filter { currentPidsSet.contains($0.key) }
             pruningCounter = 0
         }
         
@@ -584,12 +649,14 @@ final class TelemetryWorker: @unchecked Sendable {
     }
     
     private func getPIDs() -> [Int32] {
-        let numberOfProcesses = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
-        var pids = [Int32](repeating: 0, count: Int(numberOfProcesses))
-        let bufferSize = Int32(numberOfProcesses) * Int32(MemoryLayout<Int32>.size)
-        let count = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, bufferSize)
-        if count <= 0 { return [] }
-        return Array(pids.prefix(Int(count) / MemoryLayout<Int32>.size))
+        let bufferSize = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
+        guard bufferSize > 0 else { return [] }
+        let count = Int(bufferSize) / MemoryLayout<Int32>.size
+        var pids = [Int32](repeating: 0, count: count)
+        let actualBytes = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(bufferSize))
+        if actualBytes <= 0 { return [] }
+        let actualCount = Int(actualBytes) / MemoryLayout<Int32>.size
+        return Array(pids.prefix(actualCount))
     }
     
     private func getName(pid: Int32) -> String {

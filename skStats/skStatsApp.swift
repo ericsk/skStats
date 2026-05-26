@@ -29,12 +29,12 @@ struct skStatsApp: App {
                     case .network:
                         Image(systemName: "network")
                         if monitor.showMenuBarText {
-                            Text("↑\(FormatUtils.formatRate(stats.netUp)) ↓\(FormatUtils.formatRate(stats.netDown))")
+                            Text("↑\(FormatUtils.formatCompactRate(stats.netUp)) ↓\(FormatUtils.formatCompactRate(stats.netDown))")
                         }
                     case .disk:
                         Image(systemName: "internaldrive")
                         if monitor.showMenuBarText {
-                            Text("R:\(FormatUtils.formatRate(stats.diskRead)) W:\(FormatUtils.formatRate(stats.diskWrite))")
+                            Text("R:\(FormatUtils.formatCompactRate(stats.diskRead)) W:\(FormatUtils.formatCompactRate(stats.diskWrite))")
                         }
                     case .battery:
                         Image(systemName: batteryIcon(level: stats.batteryLevel, isCharging: stats.batteryIsCharging))

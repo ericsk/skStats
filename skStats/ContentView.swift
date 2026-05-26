@@ -26,7 +26,7 @@ struct ContentView: View {
                                     showAdvancedMemory: monitor.showAdvancedMemory
                                 ) 
                             }
-                            if monitor.showBattery { 
+                            if monitor.hasBattery && monitor.showBattery { 
                                 BatteryDashboard(
                                     batteryLevel: stats.batteryLevel, 
                                     batteryIsCharging: stats.batteryIsCharging, 
@@ -160,6 +160,7 @@ struct DashboardSection<Content: View>: View {
     let title: String
     let icon: String
     let content: Content
+    @State private var isHovered = false
     
     init(title: String, icon: String, @ViewBuilder content: () -> Content) {
         self.title = title
@@ -185,13 +186,19 @@ struct DashboardSection<Content: View>: View {
         .padding(16)
         .background {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(NSColor.windowBackgroundColor).opacity(0.3))
+                .fill(Color(NSColor.windowBackgroundColor).opacity(isHovered ? 0.45 : 0.3))
                 .overlay {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(LinearGradient(colors: [.white.opacity(0.2), .clear], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+                        .stroke(LinearGradient(colors: [isHovered ? .accentColor.opacity(0.4) : .white.opacity(0.2), .clear], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
                 }
         }
-        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+        .scaleEffect(isHovered ? 1.015 : 1.0)
+        .shadow(color: isHovered ? .accentColor.opacity(0.15) : .black.opacity(0.08), radius: isHovered ? 8 : 4, x: 0, y: isHovered ? 4 : 2)
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                isHovered = hovering
+            }
+        }
     }
 }
 
@@ -485,11 +492,12 @@ struct ProcessRow: View {
     let value: String
     let load: Double
     let color: Color
+    @State private var isHovered = false
     
     var body: some View {
         HStack {
             Text(name)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 11, weight: isHovered ? .semibold : .medium))
                 .lineLimit(1)
             Spacer()
             Text(value)
@@ -501,15 +509,26 @@ struct ProcessRow: View {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(color.opacity(0.1))
+                                .fill(color.opacity(isHovered ? 0.15 : 0.1))
                             
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(color.opacity(0.2))
+                                .fill(color.opacity(isHovered ? 0.3 : 0.2))
                                 .frame(width: geo.size.width * CGFloat(load))
                         }
                     }
                 )
                 .cornerRadius(6)
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isHovered ? Color.primary.opacity(0.04) : Color.clear)
+        }
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isHovered = hovering
+            }
         }
     }
 }
@@ -567,7 +586,9 @@ struct SettingsView: View {
                         Toggle("CPU", isOn: $monitor.showCPU)
                         Toggle("GPU", isOn: $monitor.showGPU)
                         Toggle("RAM", isOn: $monitor.showMemory)
-                        Toggle("Battery", isOn: $monitor.showBattery)
+                        if monitor.hasBattery {
+                            Toggle("Battery", isOn: $monitor.showBattery)
+                        }
                         Toggle("Disk", isOn: $monitor.showDisk)
                         Toggle("Net", isOn: $monitor.showNetwork)
                         Toggle("Sys Info", isOn: $monitor.showSystemInfo)
