@@ -33,7 +33,8 @@ struct ContentView: View {
                                     batteryPowerUsage: stats.batteryPowerUsage, 
                                     batteryAdapterWattage: stats.batteryAdapterWattage, 
                                     batteryCycleCount: stats.batteryCycleCount, 
-                                    batteryHealth: stats.batteryHealth
+                                    batteryHealth: stats.batteryHealth,
+                                    batteryTemperature: stats.batteryTemperature
                                 ) 
                             }
                             if monitor.showDisk || monitor.showNetwork {
@@ -83,9 +84,13 @@ struct ContentView: View {
                 Text("skStats")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundStyle(LinearGradient(colors: [.accentColor, .blue], startPoint: .leading, endPoint: .trailing))
-                Text("System Monitor")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    Text("System Monitor")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.secondary)
+                    
+                    ThermalStateBadge(state: monitor.thermalState)
+                }
             }
             Spacer()
             HStack(spacing: 12) {
@@ -219,7 +224,8 @@ struct CPUDashboard: View {
                                 }
                                 .gaugeStyle(.accessoryCircularCapacity)
                                 .tint(load > 0.8 ? .red : (load > 0.5 ? .orange : .accentColor))
-                                .frame(width: 38, height: 38)
+                                .scaleEffect(0.8)
+                                .frame(width: 32, height: 32)
                                 
                                 Text(String(format: "%.0f", load * 100))
                                     .font(.system(size: 8, weight: .bold, design: .rounded))
@@ -312,6 +318,7 @@ struct BatteryDashboard: View {
     let batteryAdapterWattage: Int
     let batteryCycleCount: Int
     let batteryHealth: Double
+    let batteryTemperature: Double
     
     var body: some View {
         DashboardSection(title: "Battery", icon: "bolt.fill") {
@@ -348,6 +355,10 @@ struct BatteryDashboard: View {
                         Text("Health: \(Int(batteryHealth * 100))%")
                         Text("•")
                         Text("Cycles: \(batteryCycleCount)")
+                        if batteryTemperature > 0 {
+                            Text("•")
+                            Text(String(format: "%.1f°C", batteryTemperature))
+                        }
                     }
                     .font(.system(size: 9))
                     .foregroundColor(.secondary.opacity(0.8))
@@ -645,6 +656,58 @@ struct SettingsGroup<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
             .cornerRadius(12)
+        }
+    }
+}
+
+struct ThermalStateBadge: View {
+    let state: ProcessInfo.ThermalState
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 5, height: 5)
+                .shadow(color: color.opacity(0.6), radius: 2)
+            
+            Text(label)
+                .font(.system(size: 8, weight: .bold, design: .rounded))
+                .foregroundColor(color)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1.5)
+        .background(color.opacity(0.1))
+        .cornerRadius(6)
+        .help("System Thermal State: \(fullDescription)")
+    }
+    
+    private var color: Color {
+        switch state {
+        case .nominal: return .green
+        case .fair: return .orange
+        case .serious: return .red
+        case .critical: return .red
+        @unknown default: return .secondary
+        }
+    }
+    
+    private var label: String {
+        switch state {
+        case .nominal: return "COOL"
+        case .fair: return "WARM"
+        case .serious: return "THROTTLED"
+        case .critical: return "HOT"
+        @unknown default: return "UNKNOWN"
+        }
+    }
+    
+    private var fullDescription: String {
+        switch state {
+        case .nominal: return "Nominal (Cool & stable)"
+        case .fair: return "Fair (Slightly elevated)"
+        case .serious: return "Serious (System is throttling to cool down)"
+        case .critical: return "Critical (Maximum cooling active, critical performance impact)"
+        @unknown default: return "Unknown"
         }
     }
 }

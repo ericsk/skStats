@@ -51,6 +51,7 @@ struct SystemStats: Equatable {
     let batteryAdapterWattage: Int
     let batteryCycleCount: Int
     let batteryHealth: Double
+    let batteryTemperature: Double
     let uptime: TimeInterval
     let topCPU: [TopProcess]
     let topMemory: [TopProcess]
@@ -68,6 +69,7 @@ class SystemMonitor: ObservableObject {
     }
     @Published var memoryTotal: Double = 0.0
     @Published var hasBattery: Bool = false
+    @Published var thermalState: ProcessInfo.ThermalState = ProcessInfo.processInfo.thermalState
     
     @AppStorage("showCPU") var showCPU: Bool = true
     @AppStorage("showGPU") var showGPU: Bool = true
@@ -89,10 +91,19 @@ class SystemMonitor: ObservableObject {
     private var timer: AnyCancellable?
     private var debounceTask: Task<Void, Never>?
     private let worker = TelemetryWorker()
+    private var thermalObserver: AnyCancellable?
     
     init() {
         self.memoryTotal = Double(ProcessInfo.processInfo.physicalMemory)
         self.hasBattery = checkBatteryPresence()
+        
+        // Observe thermal state changes instantly
+        self.thermalObserver = NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.thermalState = ProcessInfo.processInfo.thermalState
+            }
+            
         startMonitoring()
     }
     
@@ -229,7 +240,6 @@ final class TelemetryWorker: @unchecked Sendable {
     private struct ProcessCandidate {
         let pid: Int32
         let sortValue: Double
-        let displayValue: String
     }
     
     struct FetchOptions {
@@ -249,7 +259,7 @@ final class TelemetryWorker: @unchecked Sendable {
         return await withCheckedContinuation { continuation in
             queue.async { [weak self] in
                 guard let self = self else {
-                    continuation.resume(returning: SystemStats(cpuLoadPerCore: [], gpuLoad: 0, memoryUsed: 0, memorySwap: 0, memoryPressure: 0, diskRead: 0, diskWrite: 0, diskFree: 0, diskTotal: 0, netUp: 0, netDown: 0, batteryLevel: 0, batteryIsCharging: false, batteryPowerUsage: 0, batteryAdapterWattage: 0, batteryCycleCount: 0, batteryHealth: 0, uptime: 0, topCPU: [], topMemory: []))
+                    continuation.resume(returning: SystemStats(cpuLoadPerCore: [], gpuLoad: 0, memoryUsed: 0, memorySwap: 0, memoryPressure: 0, diskRead: 0, diskWrite: 0, diskFree: 0, diskTotal: 0, netUp: 0, netDown: 0, batteryLevel: 0, batteryIsCharging: false, batteryPowerUsage: 0, batteryAdapterWattage: 0, batteryCycleCount: 0, batteryHealth: 0, batteryTemperature: 0, uptime: 0, topCPU: [], topMemory: []))
                     return
                 }
                 
@@ -265,7 +275,7 @@ final class TelemetryWorker: @unchecked Sendable {
                 var disk: (read: Double, write: Double) = (0, 0)
                 var diskSpace: (free: Int64, total: Int64) = (0, 0)
                 var net: (up: Double, down: Double) = (0, 0)
-                var battery: (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double) = (0, false, 0, 0, 0, 0)
+                var battery: (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double, temperature: Double) = (0, false, 0, 0, 0, 0, 0)
                 var uptime: TimeInterval = 0
                 var topCPU: [TopProcess] = []
                 var topMem: [TopProcess] = []
@@ -310,6 +320,7 @@ final class TelemetryWorker: @unchecked Sendable {
                     batteryAdapterWattage: battery.adapter,
                     batteryCycleCount: battery.cycles,
                     batteryHealth: battery.health,
+                    batteryTemperature: battery.temperature,
                     uptime: uptime,
                     topCPU: topCPU,
                     topMemory: topMem
@@ -504,13 +515,14 @@ final class TelemetryWorker: @unchecked Sendable {
         return (up, down)
     }
     
-    private func fetchBattery() -> (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double) {
+    private func fetchBattery() -> (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double, temperature: Double) {
         var level: Double = 0
         var isCharging: Bool = false
         var cycles: Int = 0
         var health: Double = 0
         var usage: Double = 0
         var adapterWattage: Int = 0
+        var temperature: Double = 0.0
         
         let masterPort: mach_port_t = kIOMainPortDefault
         let matchingDict = IOServiceMatching("AppleSmartBattery")
@@ -554,13 +566,17 @@ final class TelemetryWorker: @unchecked Sendable {
                        let watts = adapterDetails["Watts"] as? Int {
                         adapterWattage = watts
                     }
+                    
+                    if let tempRaw = (dict["Temperature"] as? NSNumber)?.doubleValue {
+                        temperature = tempRaw / 100.0 // centi-Celsius
+                    }
                 }
                 IOObjectRelease(batteryService)
             }
             IOObjectRelease(iterator)
         }
         
-        return (level, isCharging, usage, adapterWattage, cycles, health)
+        return (level, isCharging, usage, adapterWattage, cycles, health, temperature)
     }
     
     private func fetchGPU() -> Double {
@@ -603,6 +619,7 @@ final class TelemetryWorker: @unchecked Sendable {
         }
         
         for pid in pids {
+            if pid <= 0 { continue }
             var usage = proc_taskinfo()
             let size = MemoryLayout<proc_taskinfo>.size
             if proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &usage, Int32(size)) == Int32(size) {
@@ -613,16 +630,14 @@ final class TelemetryWorker: @unchecked Sendable {
                         let delta = Double(totalTime >= prevTime ? totalTime - prevTime : 0)
                         let percentage = (delta / 1_000_000_000.0) / interval * 100.0
                         if percentage > 0.1 {
-                            cpuCandidates.append(ProcessCandidate(pid: pid, sortValue: percentage, displayValue: String(format: "%.1f%%", percentage)))
+                            cpuCandidates.append(ProcessCandidate(pid: pid, sortValue: percentage))
                         }
                     }
                 }
                 
                 if showMemory {
                     let mem = usage.pti_resident_size
-                    let mb = Double(mem) / 1024.0 / 1024.0
-                    let formatValue = mb > 1024 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
-                    memCandidates.append(ProcessCandidate(pid: pid, sortValue: Double(mem), displayValue: formatValue))
+                    memCandidates.append(ProcessCandidate(pid: pid, sortValue: Double(mem)))
                 }
             }
         }
@@ -643,8 +658,12 @@ final class TelemetryWorker: @unchecked Sendable {
         }
         
         return (
-            cpu: topCPUCandidates.map { TopProcess(name: resolveName($0.pid), value: $0.displayValue, sortValue: $0.sortValue) },
-            memory: topMemCandidates.map { TopProcess(name: resolveName($0.pid), value: $0.displayValue, sortValue: $0.sortValue) }
+            cpu: topCPUCandidates.map { TopProcess(name: resolveName($0.pid), value: String(format: "%.1f%%", $0.sortValue), sortValue: $0.sortValue) },
+            memory: topMemCandidates.map { item -> TopProcess in
+                let mb = item.sortValue / 1024.0 / 1024.0
+                let displayValue = mb > 1024 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
+                return TopProcess(name: resolveName(item.pid), value: displayValue, sortValue: item.sortValue)
+            }
         )
     }
     
