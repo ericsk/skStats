@@ -1,6 +1,7 @@
 # Xcode specific
 #
-build/        # We use this custom directory for command-line build output
+# We use this custom directory for command-line build output
+build/
 DerivedData/
 *.pbxuser
 !default.pbxuser
@@ -16,6 +17,7 @@ xcuserdata/
 *.hmap
 *.ipa
 *.xcuserstate
+.antigravitycli/
 
 # OS X system files
 #
@@ -33,5 +35,3 @@ Icon
 .bundle
 .config
 
-build/
-nanobanana-output/
