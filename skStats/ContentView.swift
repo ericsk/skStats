@@ -322,46 +322,53 @@ struct BatteryDashboard: View {
     
     var body: some View {
         DashboardSection(title: "Battery", icon: "bolt.fill") {
-            HStack(alignment: .center, spacing: 12) {
-                ZStack {
-                    Gauge(value: batteryLevel) {
-                        Text("")
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 12) {
+                    ZStack {
+                        Gauge(value: batteryLevel) {
+                            Text("")
+                        }
+                        .gaugeStyle(.accessoryCircularCapacity)
+                        .tint(batteryLevel < 0.2 ? .red : .green)
+                        .frame(width: 40, height: 40)
+                        
+                        Image(systemName: batteryIsCharging ? "bolt.fill" : "battery.100")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(batteryIsCharging ? .yellow : .primary)
                     }
-                    .gaugeStyle(.accessoryCircularCapacity)
-                    .tint(batteryLevel < 0.2 ? .red : .green)
-                    .frame(width: 44, height: 44)
                     
-                    Image(systemName: batteryIsCharging ? "bolt.fill" : "battery.100")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(batteryIsCharging ? .yellow : .primary)
-                }
-                
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(FormatUtils.formatPercentage(batteryLevel))
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                    Text(batteryIsCharging ? "Charging (\(batteryAdapterWattage)W) • \(String(format: "%.1fW", abs(batteryPowerUsage)))" : "Discharging")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 3) {
-                    if batteryPowerUsage != 0 {
-                        Text(String(format: "%.1f W", abs(batteryPowerUsage)))
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(FormatUtils.formatPercentage(batteryLevel))
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                        Text(batteryIsCharging ? "Charging (\(batteryAdapterWattage)W)" : "Discharging")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
-                    HStack(spacing: 6) {
-                        Text("Health: \(Int(batteryHealth * 100))%")
-                        Text("•")
-                        Text("Cycles: \(batteryCycleCount)")
-                        if batteryTemperature > 0 {
-                            Text("•")
-                            Text(String(format: "%.1f°C", batteryTemperature))
+                    
+                    Spacer()
+                    
+                    if batteryPowerUsage != 0 {
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text(String(format: "%.1f W", abs(batteryPowerUsage)))
+                                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                .foregroundColor(batteryPowerUsage < 0 ? .green : .primary)
+                            Text(batteryPowerUsage < 0 ? "Flow In" : "Flow Out")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.secondary)
                         }
                     }
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary.opacity(0.8))
+                }
+                
+                Divider()
+                    .opacity(0.3)
+                
+                HStack(spacing: 20) {
+                    StatView(label: "Health", value: "\(Int(batteryHealth * 100))%", color: batteryHealth > 0.8 ? .green : (batteryHealth > 0.6 ? .orange : .red))
+                    StatView(label: "Cycles", value: "\(batteryCycleCount)", color: .secondary)
+                    if batteryTemperature > 0 {
+                        StatView(label: "Temp", value: String(format: "%.1f°C", batteryTemperature), color: batteryTemperature > 45 ? .red : (batteryTemperature > 35 ? .orange : .secondary))
+                    }
                 }
             }
         }
@@ -490,9 +497,12 @@ struct StatView: View {
                 Text(label)
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(.secondary.opacity(0.8))
+                    .lineLimit(1)
                 Text(value)
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundColor(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
         }
     }
