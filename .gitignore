@@ -17,6 +17,7 @@ xcuserdata/
 *.hmap
 *.ipa
 *.xcuserstate
+project.xcworkspace/
 .antigravitycli/
 
 # OS X system files
