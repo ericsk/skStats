@@ -427,10 +427,7 @@ final class TelemetryWorker: @unchecked Sendable {
         if IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &matchIterator) == kIOReturnSuccess {
             var drive: io_registry_entry_t = IOIteratorNext(matchIterator)
             while drive != 0 {
-                var properties: Unmanaged<CFMutableDictionary>?
-                if IORegistryEntryCreateCFProperties(drive, &properties, kCFAllocatorDefault, 0) == kIOReturnSuccess,
-                   let props = properties?.takeRetainedValue() as? [String: Any],
-                   let stats = props["Statistics"] as? [String: Any] {
+                if let stats = IORegistryEntryCreateCFProperty(drive, "Statistics" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any] {
                     if let readBytes = stats["Bytes (Read)"] as? NSNumber { totalRead += readBytes.uint64Value }
                     if let writeBytes = stats["Bytes (Write)"] as? NSNumber { totalWrite += writeBytes.uint64Value }
                 }
@@ -585,10 +582,7 @@ final class TelemetryWorker: @unchecked Sendable {
         if IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &matchIterator) == kIOReturnSuccess {
             var service: io_registry_entry_t = IOIteratorNext(matchIterator)
             while service != 0 {
-                var properties: Unmanaged<CFMutableDictionary>?
-                if IORegistryEntryCreateCFProperties(service, &properties, kCFAllocatorDefault, 0) == kIOReturnSuccess,
-                   let props = properties?.takeRetainedValue() as? [String: Any],
-                   let perfStats = props["PerformanceStatistics"] as? [String: Any] {
+                if let perfStats = IORegistryEntryCreateCFProperty(service, "PerformanceStatistics" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any] {
                     if let utilization = (perfStats["Device Utilization %"] as? NSNumber) ?? (perfStats["Device Utilization"] as? NSNumber) {
                         IOObjectRelease(service)
                         IOObjectRelease(matchIterator)
@@ -607,6 +601,8 @@ final class TelemetryWorker: @unchecked Sendable {
         let pids = getPIDs()
         var cpuCandidates: [ProcessCandidate] = []
         var memCandidates: [ProcessCandidate] = []
+        cpuCandidates.reserveCapacity(pids.count)
+        memCandidates.reserveCapacity(pids.count)
         var currentTimes: [Int32: UInt64] = [:]
         
         // Prune name cache and CPU times for dead processes less frequently

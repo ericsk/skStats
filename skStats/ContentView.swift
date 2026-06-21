@@ -73,7 +73,6 @@ struct ContentView: View {
                 .background(Color(NSColor.windowBackgroundColor).opacity(0.95))
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: isShowingSettings)
-        .animation(.easeInOut(duration: 0.5), value: monitor.currentStats)
         .onAppear { monitor.isPopoverVisible = true }
         .onDisappear { monitor.isPopoverVisible = false }
     }
@@ -226,6 +225,7 @@ struct CPUDashboard: View {
                                 .tint(load > 0.8 ? .red : (load > 0.5 ? .orange : .accentColor))
                                 .scaleEffect(0.8)
                                 .frame(width: 32, height: 32)
+                                .animation(.easeInOut(duration: 0.8), value: load)
                                 
                                 Text(String(format: "%.0f", load * 100))
                                     .font(.system(size: 8, weight: .bold, design: .rounded))
@@ -264,6 +264,7 @@ struct GPUDashboard: View {
                 .gaugeStyle(.accessoryLinearCapacity)
                 .tint(LinearGradient(colors: [.purple, .indigo, .blue], startPoint: .leading, endPoint: .trailing))
                 .frame(height: 8)
+                .animation(.easeInOut(duration: 0.8), value: gpuLoad)
             }
         }
     }
@@ -298,6 +299,7 @@ struct MemoryDashboard: View {
                 .gaugeStyle(.accessoryLinearCapacity)
                 .tint(LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing))
                 .frame(height: 8)
+                .animation(.easeInOut(duration: 0.8), value: memoryUsed)
                 
                 if showAdvancedMemory {
                     HStack(spacing: 24) {
@@ -331,6 +333,7 @@ struct BatteryDashboard: View {
                         .gaugeStyle(.accessoryCircularCapacity)
                         .tint(batteryLevel < 0.2 ? .red : .green)
                         .frame(width: 40, height: 40)
+                        .animation(.easeInOut(duration: 0.8), value: batteryLevel)
                         
                         Image(systemName: batteryIsCharging ? "bolt.fill" : "battery.100")
                             .font(.system(size: 11, weight: .bold))
@@ -425,6 +428,7 @@ struct SystemInfoDashboard: View {
                         ProgressView(value: Double(used), total: Double(diskTotal))
                             .progressViewStyle(.linear)
                             .tint(Color.primary.opacity(0.6))
+                            .animation(.easeInOut(duration: 0.8), value: used)
                     }
                 }
                 
@@ -459,6 +463,7 @@ struct TopCPUDashboard: View {
                     ProcessRow(name: process.name, value: process.value, load: process.sortValue / max(maxCPU, 1.0), color: .accentColor)
                 }
             }
+            .animation(.easeInOut(duration: 0.3), value: topCPU)
         }
     }
 }
@@ -474,6 +479,7 @@ struct TopMemoryDashboard: View {
                     ProcessRow(name: process.name, value: process.value, load: process.sortValue / max(maxMem, 1.0), color: .cyan)
                 }
             }
+            .animation(.easeInOut(duration: 0.3), value: topMemory)
         }
     }
 }
