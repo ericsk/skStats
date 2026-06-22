@@ -373,17 +373,16 @@ final class TelemetryWorker: @unchecked Sendable {
         let result = host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &numCPUsU, &cpuInfo, &numCpuInfo)
         guard result == KERN_SUCCESS, let cpuInfo = cpuInfo else { return [] }
         
-        let infoPointer = cpuInfo.withMemoryRebound(to: integer_t.self, capacity: Int(numCpuInfo)) { $0 }
         let numCPUs = Int(numCPUsU)
         var currentLoad: [Double] = []
         var newTicks: [processor_cpu_load_info] = []
         
         for i in 0..<numCPUs {
             let offset = i * Int(CPU_STATE_MAX)
-            let user = UInt32(infoPointer[offset + Int(CPU_STATE_USER)])
-            let system = UInt32(infoPointer[offset + Int(CPU_STATE_SYSTEM)])
-            let idle = UInt32(infoPointer[offset + Int(CPU_STATE_IDLE)])
-            let nice = UInt32(infoPointer[offset + Int(CPU_STATE_NICE)])
+            let user = UInt32(cpuInfo[offset + Int(CPU_STATE_USER)])
+            let system = UInt32(cpuInfo[offset + Int(CPU_STATE_SYSTEM)])
+            let idle = UInt32(cpuInfo[offset + Int(CPU_STATE_IDLE)])
+            let nice = UInt32(cpuInfo[offset + Int(CPU_STATE_NICE)])
             let tick = processor_cpu_load_info(cpu_ticks: (user, system, idle, nice))
             newTicks.append(tick)
             
@@ -462,16 +461,19 @@ final class TelemetryWorker: @unchecked Sendable {
         var bytesIn: UInt64 = 0
         var bytesOut: UInt64 = 0
         
-        var offset = 0
-        while offset < len {
-            let ptr = buf.withUnsafeBufferPointer { $0.baseAddress! + offset }
-            let ifm = ptr.withMemoryRebound(to: if_msghdr2.self, capacity: 1) { $0.pointee }
-            
-            if ifm.ifm_type == UInt8(RTM_IFINFO2) {
-                bytesIn += ifm.ifm_data.ifi_ibytes
-                bytesOut += ifm.ifm_data.ifi_obytes
+        buf.withUnsafeBufferPointer { bufferPtr in
+            guard let baseAddress = bufferPtr.baseAddress else { return }
+            var offset = 0
+            while offset < len {
+                let rawPtr = UnsafeRawPointer(baseAddress).advanced(by: offset)
+                let ifm = rawPtr.load(as: if_msghdr2.self)
+                
+                if ifm.ifm_type == UInt8(RTM_IFINFO2) {
+                    bytesIn += ifm.ifm_data.ifi_ibytes
+                    bytesOut += ifm.ifm_data.ifi_obytes
+                }
+                offset += Int(ifm.ifm_msglen)
             }
-            offset += Int(ifm.ifm_msglen)
         }
         
         var up: Double = 0
