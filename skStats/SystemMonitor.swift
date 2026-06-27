@@ -225,8 +225,7 @@ struct FormatUtils {
     }
 }
 
-final class TelemetryWorker: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "com.skStats.telemetry", qos: .utility)
+actor TelemetryWorker {
     private var previousCPUTicks: [processor_cpu_load_info] = []
     private var previousDiskBytesRead: UInt64 = 0
     private var previousDiskBytesWritten: UInt64 = 0
@@ -237,9 +236,19 @@ final class TelemetryWorker: @unchecked Sendable {
     private var lastUpdateTime: Date = Date()
     private var pruningCounter: Int = 0
     
+    private var gpuServices: [io_registry_entry_t] = []
+    private var batteryServices: [io_registry_entry_t] = []
+    
     private struct ProcessCandidate {
         let pid: Int32
         let sortValue: Double
+    }
+    
+    private struct ProcessInfoResult {
+        let pid: Int32
+        let cpuTime: UInt64?
+        let cpuPercent: Double?
+        let residentSize: Double?
     }
     
     struct FetchOptions {
@@ -255,80 +264,106 @@ final class TelemetryWorker: @unchecked Sendable {
         let topMemory: Bool
     }
     
-    func fetchStats(interval: Double, options: FetchOptions, totalMemory: Double) async -> SystemStats {
-        return await withCheckedContinuation { continuation in
-            queue.async { [weak self] in
-                guard let self = self else {
-                    continuation.resume(returning: SystemStats(cpuLoadPerCore: [], gpuLoad: 0, memoryUsed: 0, memorySwap: 0, memoryPressure: 0, diskRead: 0, diskWrite: 0, diskFree: 0, diskTotal: 0, netUp: 0, netDown: 0, batteryLevel: 0, batteryIsCharging: false, batteryPowerUsage: 0, batteryAdapterWattage: 0, batteryCycleCount: 0, batteryHealth: 0, batteryTemperature: 0, uptime: 0, topCPU: [], topMemory: []))
-                    return
-                }
-                
-                let now = Date()
-                let realInterval = max(now.timeIntervalSince(self.lastUpdateTime), 0.1)
-                self.lastUpdateTime = now
-                
-                var cpu: [Double] = []
-                var gpu: Double = 0
-                var mem: Double = 0
-                var swap: Double = 0
-                var pressure: Double = 0
-                var disk: (read: Double, write: Double) = (0, 0)
-                var diskSpace: (free: Int64, total: Int64) = (0, 0)
-                var net: (up: Double, down: Double) = (0, 0)
-                var battery: (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double, temperature: Double) = (0, false, 0, 0, 0, 0, 0)
-                var uptime: TimeInterval = 0
-                var topCPU: [TopProcess] = []
-                var topMem: [TopProcess] = []
-                
-                if options.cpu { cpu = self.fetchCPU() }
-                if options.gpu { gpu = self.fetchGPU() }
-                if options.memory || options.topMemory || options.advancedMemory {
-                    mem = self.fetchMemory(totalMemory: totalMemory)
-                    if options.advancedMemory {
-                        swap = self.fetchSwap()
-                        pressure = self.fetchMemoryPressure()
-                    }
-                }
-                if options.disk { disk = self.fetchDisk(interval: realInterval) }
-                if options.systemInfo {
-                    diskSpace = self.fetchDiskSpace()
-                    uptime = self.fetchUptime()
-                }
-                if options.network { net = self.fetchNetwork64(interval: realInterval) }
-                if options.battery { battery = self.fetchBattery() }
-                if options.topCPU || options.topMemory {
-                    let results = self.fetchTopProcesses(interval: realInterval, showCPU: options.topCPU, showMemory: options.topMemory)
-                    topCPU = results.cpu
-                    topMem = results.memory
-                }
-                
-                let stats = SystemStats(
-                    cpuLoadPerCore: cpu,
-                    gpuLoad: gpu,
-                    memoryUsed: mem,
-                    memorySwap: swap,
-                    memoryPressure: pressure,
-                    diskRead: disk.read,
-                    diskWrite: disk.write,
-                    diskFree: diskSpace.free,
-                    diskTotal: diskSpace.total,
-                    netUp: net.up,
-                    netDown: net.down,
-                    batteryLevel: battery.level,
-                    batteryIsCharging: battery.isCharging,
-                    batteryPowerUsage: battery.usage,
-                    batteryAdapterWattage: battery.adapter,
-                    batteryCycleCount: battery.cycles,
-                    batteryHealth: battery.health,
-                    batteryTemperature: battery.temperature,
-                    uptime: uptime,
-                    topCPU: topCPU,
-                    topMemory: topMem
-                )
-                
-                continuation.resume(returning: stats)
+    init() {
+        setupCachedServices()
+    }
+    
+    deinit {
+        for service in gpuServices {
+            IOObjectRelease(service)
+        }
+        for service in batteryServices {
+            IOObjectRelease(service)
+        }
+    }
+    
+    private func setupCachedServices() {
+        var matchIterator: io_iterator_t = 0
+        
+        // Cache GPU Accelerator Services
+        if IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &matchIterator) == kIOReturnSuccess {
+            var service: io_registry_entry_t = IOIteratorNext(matchIterator)
+            while service != 0 {
+                gpuServices.append(service)
+                service = IOIteratorNext(matchIterator)
+            }
+            IOObjectRelease(matchIterator)
+        }
+        
+        // Cache Battery Services
+        if IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"), &matchIterator) == kIOReturnSuccess {
+            var service: io_registry_entry_t = IOIteratorNext(matchIterator)
+            while service != 0 {
+                batteryServices.append(service)
+                service = IOIteratorNext(matchIterator)
+            }
+            IOObjectRelease(matchIterator)
+        }
+    }
+    
+    func fetchStats(interval: Double, options: FetchOptions, totalMemory: Double) -> SystemStats {
+        let now = Date()
+        let realInterval = max(now.timeIntervalSince(self.lastUpdateTime), 0.1)
+        self.lastUpdateTime = now
+        
+        var cpu: [Double] = []
+        var gpu: Double = 0
+        var mem: Double = 0
+        var swap: Double = 0
+        var pressure: Double = 0
+        var disk: (read: Double, write: Double) = (0, 0)
+        var diskSpace: (free: Int64, total: Int64) = (0, 0)
+        var net: (up: Double, down: Double) = (0, 0)
+        var battery: (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double, temperature: Double) = (0, false, 0, 0, 0, 0, 0)
+        var uptime: TimeInterval = 0
+        var topCPU: [TopProcess] = []
+        var topMem: [TopProcess] = []
+        
+        if options.cpu { cpu = self.fetchCPU() }
+        if options.gpu { gpu = self.fetchGPU() }
+        if options.memory || options.topMemory || options.advancedMemory {
+            mem = self.fetchMemory(totalMemory: totalMemory)
+            if options.advancedMemory {
+                swap = self.fetchSwap()
+                pressure = self.fetchMemoryPressure()
             }
         }
+        if options.disk { disk = self.fetchDisk(interval: realInterval) }
+        if options.systemInfo {
+            diskSpace = self.fetchDiskSpace()
+            uptime = self.fetchUptime()
+        }
+        if options.network { net = self.fetchNetwork64(interval: realInterval) }
+        if options.battery { battery = self.fetchBattery() }
+        if options.topCPU || options.topMemory {
+            let results = self.fetchTopProcesses(interval: realInterval, showCPU: options.topCPU, showMemory: options.topMemory)
+            topCPU = results.cpu
+            topMem = results.memory
+        }
+        
+        return SystemStats(
+            cpuLoadPerCore: cpu,
+            gpuLoad: gpu,
+            memoryUsed: mem,
+            memorySwap: swap,
+            memoryPressure: pressure,
+            diskRead: disk.read,
+            diskWrite: disk.write,
+            diskFree: diskSpace.free,
+            diskTotal: diskSpace.total,
+            netUp: net.up,
+            netDown: net.down,
+            batteryLevel: battery.level,
+            batteryIsCharging: battery.isCharging,
+            batteryPowerUsage: battery.usage,
+            batteryAdapterWattage: battery.adapter,
+            batteryCycleCount: battery.cycles,
+            batteryHealth: battery.health,
+            batteryTemperature: battery.temperature,
+            uptime: uptime,
+            topCPU: topCPU,
+            topMemory: topMem
+        )
     }
     
     private func fetchSwap() -> Double {
@@ -523,88 +558,71 @@ final class TelemetryWorker: @unchecked Sendable {
         var adapterWattage: Int = 0
         var temperature: Double = 0.0
         
-        let masterPort: mach_port_t = kIOMainPortDefault
-        let matchingDict = IOServiceMatching("AppleSmartBattery")
-        var iterator: io_iterator_t = 0
-        if IOServiceGetMatchingServices(masterPort, matchingDict, &iterator) == kIOReturnSuccess {
-            let batteryService = IOIteratorNext(iterator)
-            if batteryService != 0 {
-                var props: Unmanaged<CFMutableDictionary>?
-                if IORegistryEntryCreateCFProperties(batteryService, &props, kCFAllocatorDefault, 0) == kIOReturnSuccess,
-                   let dict = props?.takeRetainedValue() as? [String: Any] {
-                    
-                    let maxCap = (dict["MaxCapacity"] as? NSNumber)?.doubleValue ?? 100.0
-                    let curCap = (dict["CurrentCapacity"] as? NSNumber)?.doubleValue ?? 0.0
-                    level = maxCap > 0 ? curCap / maxCap : 0.0
-                    
-                    isCharging = dict["IsCharging"] as? Bool ?? false
-                    if !isCharging {
-                        if let isChargingNum = dict["IsCharging"] as? NSNumber {
-                            isCharging = isChargingNum.boolValue
-                        }
-                    }
-                    
-                    cycles = (dict["CycleCount"] as? NSNumber)?.intValue ?? 0
-                    
-                    let designCap = (dict["DesignCapacity"] as? NSNumber)?.doubleValue ?? 0.0
-                    let rawMaxCap = (dict["AppleRawMaxCapacity"] as? NSNumber)?.doubleValue ?? maxCap
-                    if designCap > 0 {
-                        if rawMaxCap <= 100 && designCap > 100 {
-                            health = 1.0
-                        } else {
-                            health = rawMaxCap / designCap
-                        }
-                    }
-                    
-                    if let amperage = (dict["Amperage"] as? NSNumber)?.int64Value,
-                       let voltage = (dict["Voltage"] as? NSNumber)?.int64Value {
-                        usage = Double(amperage) * Double(voltage) / 1_000_000.0 // mA * mV = uW -> W
-                    }
-                    
-                    if let adapterDetails = dict["AdapterDetails"] as? [String: Any],
-                       let watts = adapterDetails["Watts"] as? Int {
-                        adapterWattage = watts
-                    }
-                    
-                    if let tempRaw = (dict["Temperature"] as? NSNumber)?.doubleValue {
-                        temperature = tempRaw / 100.0 // centi-Celsius
+        for batteryService in batteryServices {
+            var props: Unmanaged<CFMutableDictionary>?
+            if IORegistryEntryCreateCFProperties(batteryService, &props, kCFAllocatorDefault, 0) == kIOReturnSuccess,
+               let dict = props?.takeRetainedValue() as? [String: Any] {
+                
+                let maxCap = (dict["MaxCapacity"] as? NSNumber)?.doubleValue ?? 100.0
+                let curCap = (dict["CurrentCapacity"] as? NSNumber)?.doubleValue ?? 0.0
+                level = maxCap > 0 ? curCap / maxCap : 0.0
+                
+                isCharging = dict["IsCharging"] as? Bool ?? false
+                if !isCharging {
+                    if let isChargingNum = dict["IsCharging"] as? NSNumber {
+                        isCharging = isChargingNum.boolValue
                     }
                 }
-                IOObjectRelease(batteryService)
+                
+                cycles = (dict["CycleCount"] as? NSNumber)?.intValue ?? 0
+                
+                let designCap = (dict["DesignCapacity"] as? NSNumber)?.doubleValue ?? 0.0
+                let rawMaxCap = (dict["AppleRawMaxCapacity"] as? NSNumber)?.doubleValue ?? maxCap
+                if designCap > 0 {
+                    if rawMaxCap <= 100 && designCap > 100 {
+                        health = 1.0
+                    } else {
+                        health = rawMaxCap / designCap
+                    }
+                }
+                
+                if let amperage = (dict["Amperage"] as? NSNumber)?.int64Value,
+                   let voltage = (dict["Voltage"] as? NSNumber)?.int64Value {
+                    usage = Double(amperage) * Double(voltage) / 1_000_000.0 // mA * mV = uW -> W
+                }
+                
+                if let adapterDetails = dict["AdapterDetails"] as? [String: Any],
+                   let watts = adapterDetails["Watts"] as? Int {
+                    adapterWattage = watts
+                }
+                
+                if let tempRaw = (dict["Temperature"] as? NSNumber)?.doubleValue {
+                    temperature = tempRaw / 100.0 // centi-Celsius
+                }
             }
-            IOObjectRelease(iterator)
         }
         
         return (level, isCharging, usage, adapterWattage, cycles, health, temperature)
     }
     
     private func fetchGPU() -> Double {
-        var matchIterator: io_iterator_t = 0
-        let matchingDict = IOServiceMatching("IOAccelerator")
-        if IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &matchIterator) == kIOReturnSuccess {
-            var service: io_registry_entry_t = IOIteratorNext(matchIterator)
-            while service != 0 {
-                if let perfStats = IORegistryEntryCreateCFProperty(service, "PerformanceStatistics" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any] {
-                    if let utilization = (perfStats["Device Utilization %"] as? NSNumber) ?? (perfStats["Device Utilization"] as? NSNumber) {
-                        IOObjectRelease(service)
-                        IOObjectRelease(matchIterator)
-                        return utilization.doubleValue / 100.0
-                    }
+        for service in gpuServices {
+            if let perfStats = IORegistryEntryCreateCFProperty(service, "PerformanceStatistics" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any] {
+                if let utilization = (perfStats["Device Utilization %"] as? NSNumber) ?? (perfStats["Device Utilization"] as? NSNumber) {
+                    return utilization.doubleValue / 100.0
                 }
-                IOObjectRelease(service)
-                service = IOIteratorNext(matchIterator)
             }
-            IOObjectRelease(matchIterator)
         }
         return 0
     }
     
     private func fetchTopProcesses(interval: Double, showCPU: Bool, showMemory: Bool) -> (cpu: [TopProcess], memory: [TopProcess]) {
         let pids = getPIDs()
+        let count = pids.count
         var cpuCandidates: [ProcessCandidate] = []
         var memCandidates: [ProcessCandidate] = []
-        cpuCandidates.reserveCapacity(pids.count)
-        memCandidates.reserveCapacity(pids.count)
+        cpuCandidates.reserveCapacity(count)
+        memCandidates.reserveCapacity(count)
         var currentTimes: [Int32: UInt64] = [:]
         
         // Prune name cache and CPU times for dead processes less frequently
@@ -616,27 +634,50 @@ final class TelemetryWorker: @unchecked Sendable {
             pruningCounter = 0
         }
         
-        for pid in pids {
-            if pid <= 0 { continue }
+        let previousTimes = self.previousProcessCPUTimes
+        var results = [ProcessInfoResult?](repeating: nil, count: count)
+        
+        DispatchQueue.concurrentPerform(iterations: count) { index in
+            let pid = pids[index]
+            if pid <= 0 { return }
             var usage = proc_taskinfo()
             let size = MemoryLayout<proc_taskinfo>.size
             if proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &usage, Int32(size)) == Int32(size) {
+                var cpuTime: UInt64? = nil
+                var cpuPercent: Double? = nil
+                var residentSize: Double? = nil
+                
                 if showCPU {
                     let totalTime = usage.pti_total_user + usage.pti_total_system
-                    currentTimes[pid] = totalTime
-                    if let prevTime = previousProcessCPUTimes[pid], interval > 0 {
+                    cpuTime = totalTime
+                    if let prevTime = previousTimes[pid], interval > 0 {
                         let delta = Double(totalTime >= prevTime ? totalTime - prevTime : 0)
                         let percentage = (delta / 1_000_000_000.0) / interval * 100.0
                         if percentage > 0.1 {
-                            cpuCandidates.append(ProcessCandidate(pid: pid, sortValue: percentage))
+                            cpuPercent = percentage
                         }
                     }
                 }
                 
                 if showMemory {
-                    let mem = usage.pti_resident_size
-                    memCandidates.append(ProcessCandidate(pid: pid, sortValue: Double(mem)))
+                    residentSize = Double(usage.pti_resident_size)
                 }
+                
+                results[index] = ProcessInfoResult(pid: pid, cpuTime: cpuTime, cpuPercent: cpuPercent, residentSize: residentSize)
+            }
+        }
+        
+        for case let res? in results {
+            if showCPU {
+                if let cpuTime = res.cpuTime {
+                    currentTimes[res.pid] = cpuTime
+                }
+                if let cpuPercent = res.cpuPercent {
+                    cpuCandidates.append(ProcessCandidate(pid: res.pid, sortValue: cpuPercent))
+                }
+            }
+            if showMemory, let mem = res.residentSize {
+                memCandidates.append(ProcessCandidate(pid: res.pid, sortValue: mem))
             }
         }
         
