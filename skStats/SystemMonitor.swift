@@ -563,8 +563,12 @@ actor TelemetryWorker {
             if IORegistryEntryCreateCFProperties(batteryService, &props, kCFAllocatorDefault, 0) == kIOReturnSuccess,
                let dict = props?.takeRetainedValue() as? [String: Any] {
                 
-                let maxCap = (dict["MaxCapacity"] as? NSNumber)?.doubleValue ?? 100.0
-                let curCap = (dict["CurrentCapacity"] as? NSNumber)?.doubleValue ?? 0.0
+                let batteryData = dict["BatteryData"] as? [String: Any]
+                
+                let maxCap = (dict["MaxCapacity"] as? NSNumber)?.doubleValue ??
+                             (batteryData?["MaxCapacity"] as? NSNumber)?.doubleValue ?? 100.0
+                let curCap = (dict["CurrentCapacity"] as? NSNumber)?.doubleValue ??
+                             (batteryData?["CurrentCapacity"] as? NSNumber)?.doubleValue ?? 0.0
                 level = maxCap > 0 ? curCap / maxCap : 0.0
                 
                 isCharging = dict["IsCharging"] as? Bool ?? false
@@ -574,10 +578,14 @@ actor TelemetryWorker {
                     }
                 }
                 
-                cycles = (dict["CycleCount"] as? NSNumber)?.intValue ?? 0
+                cycles = (dict["CycleCount"] as? NSNumber)?.intValue ??
+                         (batteryData?["CycleCount"] as? NSNumber)?.intValue ?? 0
                 
-                let designCap = (dict["DesignCapacity"] as? NSNumber)?.doubleValue ?? 0.0
-                let rawMaxCap = (dict["AppleRawMaxCapacity"] as? NSNumber)?.doubleValue ?? maxCap
+                let designCap = (dict["DesignCapacity"] as? NSNumber)?.doubleValue ??
+                                (batteryData?["DesignCapacity"] as? NSNumber)?.doubleValue ?? 0.0
+                let rawMaxCap = (dict["AppleRawMaxCapacity"] as? NSNumber)?.doubleValue ??
+                                (batteryData?["NominalChargeCapacity"] as? NSNumber)?.doubleValue ??
+                                (batteryData?["FullChargeCapacity"] as? NSNumber)?.doubleValue ?? maxCap
                 if designCap > 0 {
                     if rawMaxCap <= 100 && designCap > 100 {
                         health = 1.0
