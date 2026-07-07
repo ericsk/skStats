@@ -16,7 +16,7 @@ struct ContentView: View {
                     if let stats = monitor.currentStats {
                         Group {
                             if monitor.showCPU { CPUDashboard(cpuLoadPerCore: stats.cpuLoadPerCore) }
-                            if monitor.showGPU { GPUDashboard(gpuLoad: stats.gpuLoad) }
+                            if monitor.showGPU { GPUDashboard(gpuLoad: stats.gpuLoad, topGPU: stats.topGPU, showTopGPU: monitor.showTopGPU) }
                             if monitor.showMemory { 
                                 MemoryDashboard(
                                     memoryUsed: stats.memoryUsed, 
@@ -245,26 +245,43 @@ struct CPUDashboard: View {
 
 struct GPUDashboard: View {
     let gpuLoad: Double
+    let topGPU: [TopProcess]
+    let showTopGPU: Bool
     
     var body: some View {
         DashboardSection(title: "GPU", icon: "square.grid.3x3.fill") {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Current Load")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text(FormatUtils.formatPercentage(gpuLoad))
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Current Load")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(FormatUtils.formatPercentage(gpuLoad))
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                    }
+                    
+                    Gauge(value: gpuLoad) {
+                        Text("")
+                    }
+                    .gaugeStyle(.accessoryLinearCapacity)
+                    .tint(LinearGradient(colors: [.purple, .indigo, .blue], startPoint: .leading, endPoint: .trailing))
+                    .frame(height: 8)
+                    .animation(.easeInOut(duration: 0.8), value: gpuLoad)
                 }
                 
-                Gauge(value: gpuLoad) {
-                    Text("")
+                if showTopGPU && !topGPU.isEmpty {
+                    Divider()
+                        .padding(.vertical, 2)
+                    
+                    VStack(spacing: 8) {
+                        let maxGPU = topGPU.first?.sortValue ?? 100.0
+                        ForEach(topGPU) { process in
+                            ProcessRow(name: process.name, value: process.value, load: process.sortValue / max(maxGPU, 1.0), color: .purple)
+                        }
+                    }
+                    .animation(.easeInOut(duration: 0.3), value: topGPU)
                 }
-                .gaugeStyle(.accessoryLinearCapacity)
-                .tint(LinearGradient(colors: [.purple, .indigo, .blue], startPoint: .leading, endPoint: .trailing))
-                .frame(height: 8)
-                .animation(.easeInOut(duration: 0.8), value: gpuLoad)
             }
         }
     }
@@ -620,6 +637,7 @@ struct SettingsView: View {
                         Toggle("Net", isOn: $monitor.showNetwork)
                         Toggle("Sys Info", isOn: $monitor.showSystemInfo)
                         Toggle("Top CPU", isOn: $monitor.showTopCPU)
+                        Toggle("Top GPU", isOn: $monitor.showTopGPU)
                         Toggle("Top RAM", isOn: $monitor.showTopMemory)
                         Toggle("Adv RAM", isOn: $monitor.showAdvancedMemory)
                     }

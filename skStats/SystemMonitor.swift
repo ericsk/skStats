@@ -54,6 +54,7 @@ struct SystemStats: Equatable {
     let batteryTemperature: Double
     let uptime: TimeInterval
     let topCPU: [TopProcess]
+    let topGPU: [TopProcess]
     let topMemory: [TopProcess]
 }
 
@@ -78,6 +79,7 @@ class SystemMonitor: ObservableObject {
     @AppStorage("showNetwork") var showNetwork: Bool = true
     @AppStorage("showTopCPU") var showTopCPU: Bool = true
     @AppStorage("showTopMemory") var showTopMemory: Bool = true
+    @AppStorage("showTopGPU") var showTopGPU: Bool = true
     @AppStorage("showBattery") var showBattery: Bool = true
     @AppStorage("showAdvancedMemory") var showAdvancedMemory: Bool = true
     @AppStorage("showSystemInfo") var showSystemInfo: Bool = true
@@ -172,6 +174,7 @@ class SystemMonitor: ObservableObject {
             advancedMemory: isVisible ? showAdvancedMemory : false,
             systemInfo: isVisible ? showSystemInfo : false,
             topCPU: isVisible ? showTopCPU : false,
+            topGPU: isVisible ? showTopGPU : false,
             topMemory: isVisible ? showTopMemory : false
         )
         let totalMem = memoryTotal
@@ -232,6 +235,7 @@ actor TelemetryWorker {
     private var previousNetworkBytesIn: UInt64 = 0
     private var previousNetworkBytesOut: UInt64 = 0
     private var previousProcessCPUTimes: [Int32: UInt64] = [:]
+    private var previousProcessGPUTimes: [Int32: UInt64] = [:]
     private var nameCache: [Int32: String] = [:]
     private var lastUpdateTime: Date = Date()
     private var pruningCounter: Int = 0
@@ -261,6 +265,7 @@ actor TelemetryWorker {
         let advancedMemory: Bool
         let systemInfo: Bool
         let topCPU: Bool
+        let topGPU: Bool
         let topMemory: Bool
     }
     
@@ -317,6 +322,7 @@ actor TelemetryWorker {
         var battery: (level: Double, isCharging: Bool, usage: Double, adapter: Int, cycles: Int, health: Double, temperature: Double) = (0, false, 0, 0, 0, 0, 0)
         var uptime: TimeInterval = 0
         var topCPU: [TopProcess] = []
+        var topGPU: [TopProcess] = []
         var topMem: [TopProcess] = []
         
         if options.cpu { cpu = self.fetchCPU() }
@@ -340,6 +346,9 @@ actor TelemetryWorker {
             topCPU = results.cpu
             topMem = results.memory
         }
+        if options.topGPU {
+            topGPU = self.fetchTopGPU(interval: realInterval)
+        }
         
         return SystemStats(
             cpuLoadPerCore: cpu,
@@ -362,6 +371,7 @@ actor TelemetryWorker {
             batteryTemperature: battery.temperature,
             uptime: uptime,
             topCPU: topCPU,
+            topGPU: topGPU,
             topMemory: topMem
         )
     }
@@ -581,11 +591,24 @@ actor TelemetryWorker {
                 cycles = (dict["CycleCount"] as? NSNumber)?.intValue ??
                          (batteryData?["CycleCount"] as? NSNumber)?.intValue ?? 0
                 
-                let designCap = (dict["DesignCapacity"] as? NSNumber)?.doubleValue ??
-                                (batteryData?["DesignCapacity"] as? NSNumber)?.doubleValue ?? 0.0
-                let rawMaxCap = (dict["AppleRawMaxCapacity"] as? NSNumber)?.doubleValue ??
-                                (batteryData?["NominalChargeCapacity"] as? NSNumber)?.doubleValue ??
-                                (batteryData?["FullChargeCapacity"] as? NSNumber)?.doubleValue ?? maxCap
+                var designCap = (dict["DesignCapacity"] as? NSNumber)?.doubleValue ?? 0.0
+                var rawMaxCap = (dict["AppleRawMaxCapacity"] as? NSNumber)?.doubleValue ?? 0.0
+                
+                if let batteryData = dict["BatteryData"] as? [String: Any] {
+                    if designCap == 0 {
+                        designCap = (batteryData["DesignCapacity"] as? NSNumber)?.doubleValue ?? 0.0
+                    }
+                    if rawMaxCap == 0 {
+                        rawMaxCap = (batteryData["AppleRawMaxCapacity"] as? NSNumber)?.doubleValue ??
+                                    (batteryData["NominalChargeCapacity"] as? NSNumber)?.doubleValue ??
+                                    (batteryData["FullChargeCapacity"] as? NSNumber)?.doubleValue ??
+                                    (batteryData["MaxCapacity"] as? NSNumber)?.doubleValue ?? 0.0
+                    }
+                }
+                
+                if rawMaxCap == 0 {
+                    rawMaxCap = maxCap
+                }
                 if designCap > 0 {
                     if rawMaxCap <= 100 && designCap > 100 {
                         health = 1.0
@@ -622,6 +645,84 @@ actor TelemetryWorker {
             }
         }
         return 0
+    }
+    
+    private func fetchTopGPU(interval: Double) -> [TopProcess] {
+        var currentGPUTimes: [Int32: UInt64] = [:]
+        var processNames: [Int32: String] = [:]
+        
+        var iterator: io_iterator_t = 0
+        let matchingDict = IOServiceMatching("IOAccelerator")
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &iterator) == kIOReturnSuccess else {
+            return []
+        }
+        defer { IOObjectRelease(iterator) }
+        
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            var childIterator: io_iterator_t = 0
+            if IORegistryEntryGetChildIterator(service, kIOServicePlane, &childIterator) == kIOReturnSuccess {
+                var child = IOIteratorNext(childIterator)
+                while child != 0 {
+                    var props: Unmanaged<CFMutableDictionary>?
+                    if IORegistryEntryCreateCFProperties(child, &props, kCFAllocatorDefault, 0) == kIOReturnSuccess,
+                       let dict = props?.takeRetainedValue() as? [String: Any] {
+                        if let creator = dict["IOUserClientCreator"] as? String {
+                            let components = creator.components(separatedBy: ",")
+                            if components.count >= 1 {
+                                let pidString = components[0].replacingOccurrences(of: "pid ", with: "").trimmingCharacters(in: .whitespaces)
+                                if let pid = Int32(pidString) {
+                                    var name = ""
+                                    if components.count >= 2 {
+                                        name = components[1].trimmingCharacters(in: .whitespaces)
+                                    }
+                                    if name.isEmpty {
+                                        name = getName(pid: pid)
+                                    }
+                                    processNames[pid] = name
+                                    
+                                    var clientGPUTime: UInt64 = 0
+                                    if let appUsage = dict["AppUsage"] as? [[String: Any]] {
+                                        for entry in appUsage {
+                                            if let gpuTime = (entry["accumulatedGPUTime"] as? NSNumber)?.uint64Value {
+                                                clientGPUTime += gpuTime
+                                            }
+                                        }
+                                    }
+                                    currentGPUTimes[pid, default: 0] += clientGPUTime
+                                }
+                            }
+                        }
+                    }
+                    IOObjectRelease(child)
+                    child = IOIteratorNext(childIterator)
+                }
+                IOObjectRelease(childIterator)
+            }
+            IOObjectRelease(service)
+            service = IOIteratorNext(iterator)
+        }
+        
+        var candidates: [ProcessCandidate] = []
+        let previousTimes = self.previousProcessGPUTimes
+        
+        for (pid, currentTime) in currentGPUTimes {
+            if let prevTime = previousTimes[pid], interval > 0 {
+                let delta = Double(currentTime >= prevTime ? currentTime - prevTime : 0)
+                let percentage = (delta / 1_000_000_000.0) / interval * 100.0
+                if percentage > 0.1 {
+                    candidates.append(ProcessCandidate(pid: pid, sortValue: percentage))
+                }
+            }
+        }
+        
+        self.previousProcessGPUTimes = currentGPUTimes
+        
+        let topGPUCandidates = candidates.sorted { $0.sortValue > $1.sortValue }.prefix(3)
+        return topGPUCandidates.map { item in
+            let name = processNames[item.pid] ?? getName(pid: item.pid)
+            return TopProcess(name: name, value: String(format: "%.1f%%", item.sortValue), sortValue: item.sortValue)
+        }
     }
     
     private func fetchTopProcesses(interval: Double, showCPU: Bool, showMemory: Bool) -> (cpu: [TopProcess], memory: [TopProcess]) {
