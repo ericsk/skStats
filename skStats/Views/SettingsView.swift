@@ -6,17 +6,28 @@ struct SettingsView: View {
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 20) {
-                SettingsGroup(title: "Menu Bar", icon: "menubar.rectangle") {
-                    Toggle("Show Real-time Info", isOn: $monitor.showMenuBarText)
+                SettingsGroup(title: "Menu Bar Display", icon: "menubar.rectangle") {
+                    Toggle("Show Real-time Info Text", isOn: $monitor.showMenuBarText)
                     
-                    if monitor.showMenuBarText {
-                        Picker("Display Mode", selection: $monitor.showMenuBarMode) {
-                            ForEach(MenuBarDisplayMode.allCases) { mode in
-                                Text(mode.rawValue).tag(mode)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Active Metrics on Menu Bar:")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.secondary)
+                        
+                        let columns = [GridItem(.flexible()), GridItem(.flexible())]
+                        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                            Toggle("CPU", isOn: $monitor.showMenuBarCPU)
+                            Toggle("GPU", isOn: $monitor.showMenuBarGPU)
+                            Toggle("Memory", isOn: $monitor.showMenuBarMemory)
+                            Toggle("Network", isOn: $monitor.showMenuBarNetwork)
+                            Toggle("Disk", isOn: $monitor.showMenuBarDisk)
+                            if monitor.hasBattery {
+                                Toggle("Battery", isOn: $monitor.showMenuBarBattery)
                             }
                         }
-                        .pickerStyle(.menu)
+                        .toggleStyle(.checkbox)
                     }
+                    .padding(.top, 4)
                 }
                 
                 SettingsGroup(title: "General", icon: "gearshape.fill") {

@@ -1,5 +1,27 @@
 import Foundation
 
+enum MenuBarItem: String, CaseIterable, Identifiable, Codable {
+    case cpu = "CPU"
+    case gpu = "GPU"
+    case memory = "Memory"
+    case network = "Network"
+    case disk = "Disk"
+    case battery = "Battery"
+    
+    var id: String { self.rawValue }
+    
+    var iconName: String {
+        switch self {
+        case .cpu: return "cpu"
+        case .gpu: return "square.grid.3x3.fill"
+        case .memory: return "memorychip"
+        case .network: return "network"
+        case .disk: return "internaldrive"
+        case .battery: return "battery.100"
+        }
+    }
+}
+
 enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     case cpu = "CPU"
     case gpu = "GPU"

@@ -8,38 +8,54 @@ struct skStatsApp: App {
         MenuBarExtra {
             ContentView(monitor: monitor)
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 8) {
                 if let stats = monitor.currentStats {
-                    switch monitor.showMenuBarMode {
-                    case .cpu:
-                        Image(systemName: "cpu")
-                        if monitor.showMenuBarText {
-                            Text(FormatUtils.formatPercentage(stats.totalCPULoad))
+                    if monitor.showMenuBarCPU {
+                        HStack(spacing: 3) {
+                            Image(systemName: "cpu")
+                            if monitor.showMenuBarText {
+                                Text(FormatUtils.formatPercentage(stats.totalCPULoad))
+                            }
                         }
-                    case .gpu:
-                        Image(systemName: "square.grid.3x3.fill")
-                        if monitor.showMenuBarText {
-                            Text(FormatUtils.formatPercentage(stats.gpuLoad))
+                    }
+                    if monitor.showMenuBarGPU {
+                        HStack(spacing: 3) {
+                            Image(systemName: "square.grid.3x3.fill")
+                            if monitor.showMenuBarText {
+                                Text(FormatUtils.formatPercentage(stats.gpuLoad))
+                            }
                         }
-                    case .memory:
-                        Image(systemName: "memorychip")
-                        if monitor.showMenuBarText {
-                            Text(FormatUtils.formatPercentage(stats.memoryUsed / monitor.memoryTotal))
+                    }
+                    if monitor.showMenuBarMemory {
+                        HStack(spacing: 3) {
+                            Image(systemName: "memorychip")
+                            if monitor.showMenuBarText {
+                                Text(FormatUtils.formatPercentage(stats.memoryUsed / monitor.memoryTotal))
+                            }
                         }
-                    case .network:
-                        Image(systemName: "network")
-                        if monitor.showMenuBarText {
-                            Text("↑\(FormatUtils.formatCompactRate(stats.netUp)) ↓\(FormatUtils.formatCompactRate(stats.netDown))")
+                    }
+                    if monitor.showMenuBarNetwork {
+                        HStack(spacing: 3) {
+                            Image(systemName: "network")
+                            if monitor.showMenuBarText {
+                                Text("↑\(FormatUtils.formatCompactRate(stats.netUp)) ↓\(FormatUtils.formatCompactRate(stats.netDown))")
+                            }
                         }
-                    case .disk:
-                        Image(systemName: "internaldrive")
-                        if monitor.showMenuBarText {
-                            Text("R:\(FormatUtils.formatCompactRate(stats.diskRead)) W:\(FormatUtils.formatCompactRate(stats.diskWrite))")
+                    }
+                    if monitor.showMenuBarDisk {
+                        HStack(spacing: 3) {
+                            Image(systemName: "internaldrive")
+                            if monitor.showMenuBarText {
+                                Text("R:\(FormatUtils.formatCompactRate(stats.diskRead)) W:\(FormatUtils.formatCompactRate(stats.diskWrite))")
+                            }
                         }
-                    case .battery:
-                        Image(systemName: batteryIcon(level: stats.batteryLevel, isCharging: stats.batteryIsCharging))
-                        if monitor.showMenuBarText {
-                            Text(FormatUtils.formatPercentage(stats.batteryLevel))
+                    }
+                    if monitor.hasBattery && monitor.showMenuBarBattery {
+                        HStack(spacing: 3) {
+                            Image(systemName: batteryIcon(level: stats.batteryLevel, isCharging: stats.batteryIsCharging))
+                            if monitor.showMenuBarText {
+                                Text(FormatUtils.formatPercentage(stats.batteryLevel))
+                            }
                         }
                     }
                 } else {

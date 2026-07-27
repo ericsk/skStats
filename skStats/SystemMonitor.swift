@@ -31,7 +31,13 @@ class SystemMonitor: ObservableObject {
     @AppStorage("showAdvancedMemory") var showAdvancedMemory: Bool = true
     @AppStorage("showSystemInfo") var showSystemInfo: Bool = true
     
-    @AppStorage("showMenuBarMode") var showMenuBarMode: MenuBarDisplayMode = .cpu
+    @AppStorage("showMenuBarCPU") var showMenuBarCPU: Bool = true
+    @AppStorage("showMenuBarGPU") var showMenuBarGPU: Bool = false
+    @AppStorage("showMenuBarMemory") var showMenuBarMemory: Bool = false
+    @AppStorage("showMenuBarNetwork") var showMenuBarNetwork: Bool = false
+    @AppStorage("showMenuBarDisk") var showMenuBarDisk: Bool = false
+    @AppStorage("showMenuBarBattery") var showMenuBarBattery: Bool = false
+    
     @AppStorage("showMenuBarText") var showMenuBarText: Bool = true
     @AppStorage("updateInterval") var updateInterval: Double = 3.0
     
@@ -112,12 +118,12 @@ class SystemMonitor: ObservableObject {
         let interval = updateInterval
         let isVisible = isPopoverVisible
         let options = TelemetryWorker.FetchOptions(
-            cpu: isVisible ? showCPU : (showMenuBarMode == .cpu),
-            gpu: isVisible ? showGPU : (showMenuBarMode == .gpu),
-            memory: isVisible ? showMemory : (showMenuBarMode == .memory),
-            disk: isVisible ? showDisk : (showMenuBarMode == .disk),
-            network: isVisible ? showNetwork : (showMenuBarMode == .network),
-            battery: isVisible ? showBattery : (showMenuBarMode == .battery),
+            cpu: isVisible ? showCPU : showMenuBarCPU,
+            gpu: isVisible ? showGPU : showMenuBarGPU,
+            memory: isVisible ? showMemory : showMenuBarMemory,
+            disk: isVisible ? showDisk : showMenuBarDisk,
+            network: isVisible ? showNetwork : showMenuBarNetwork,
+            battery: isVisible ? showBattery : (hasBattery && showMenuBarBattery),
             advancedMemory: isVisible ? showAdvancedMemory : false,
             systemInfo: isVisible ? showSystemInfo : false,
             topCPU: isVisible ? showTopCPU : false,
