@@ -12,6 +12,11 @@
 		C33F3F81B3FE64FBDC34C67E /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98E81FAC42FD9528AF8791BB /* ContentView.swift */; };
 		DCE2FE3F0ABC3C15E4FE1DC7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 013DDA15DC5DCB43DEF004DD /* Assets.xcassets */; };
 		E8CA454A62AF1B7B3B97FC4F /* SystemMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EE5C53F31742C2C5B006AC /* SystemMonitor.swift */; };
+		A10000012E00000000000001 /* SystemModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000012E00000000000001 /* SystemModels.swift */; };
+		A10000022E00000000000002 /* FormatUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000022E00000000000002 /* FormatUtils.swift */; };
+		A10000032E00000000000003 /* TelemetryWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000032E00000000000003 /* TelemetryWorker.swift */; };
+		A10000042E00000000000004 /* DashboardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000042E00000000000004 /* DashboardViews.swift */; };
+		A10000052E00000000000005 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000052E00000000000005 /* SettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -22,6 +27,11 @@
 		98E81FAC42FD9528AF8791BB /* ContentView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		BFF666506BC1F440DA17ECEC /* skStats.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = skStats.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DC7A287C7DC82379E8053B9D /* skStatsApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = skStatsApp.swift; sourceTree = "<group>"; };
+		B10000012E00000000000001 /* SystemModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Services/SystemModels.swift; sourceTree = "<group>"; };
+		B10000022E00000000000002 /* FormatUtils.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Services/FormatUtils.swift; sourceTree = "<group>"; };
+		B10000032E00000000000003 /* TelemetryWorker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Services/TelemetryWorker.swift; sourceTree = "<group>"; };
+		B10000042E00000000000004 /* DashboardViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Views/DashboardViews.swift; sourceTree = "<group>"; };
+		B10000052E00000000000005 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Views/SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,6 +61,11 @@
 				DC7A287C7DC82379E8053B9D /* skStatsApp.swift */,
 				98E81FAC42FD9528AF8791BB /* ContentView.swift */,
 				11EE5C53F31742C2C5B006AC /* SystemMonitor.swift */,
+				B10000012E00000000000001 /* SystemModels.swift */,
+				B10000022E00000000000002 /* FormatUtils.swift */,
+				B10000032E00000000000003 /* TelemetryWorker.swift */,
+				B10000042E00000000000004 /* DashboardViews.swift */,
+				B10000052E00000000000005 /* SettingsView.swift */,
 				393D30522E4E11214175CFEC /* Info.plist */,
 				013DDA15DC5DCB43DEF004DD /* Assets.xcassets */,
 			);
@@ -150,6 +165,11 @@
 				5CB1A7A2E60323D00E3C2DF8 /* skStatsApp.swift in Sources */,
 				C33F3F81B3FE64FBDC34C67E /* ContentView.swift in Sources */,
 				E8CA454A62AF1B7B3B97FC4F /* SystemMonitor.swift in Sources */,
+				A10000012E00000000000001 /* SystemModels.swift in Sources */,
+				A10000022E00000000000002 /* FormatUtils.swift in Sources */,
+				A10000032E00000000000003 /* TelemetryWorker.swift in Sources */,
+				A10000042E00000000000004 /* DashboardViews.swift in Sources */,
+				A10000052E00000000000005 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
