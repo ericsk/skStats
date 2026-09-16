@@ -9,64 +9,28 @@ struct ContentView: View {
             if isShowingSettings {
                 settingsHeader
                 SettingsView(monitor: monitor)
+                    .frame(maxHeight: 520)
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .trailing)))
             } else {
                 mainHeader
-                VStack(alignment: .leading, spacing: 10) {
+                Group {
                     if let stats = monitor.currentStats {
-                        Group {
-                            if monitor.showCPU { DashboardComponents.CPUDashboard(cpuLoadPerCore: stats.cpuLoadPerCore) }
-                            if monitor.showGPU { DashboardComponents.GPUDashboard(gpuLoad: stats.gpuLoad, topGPU: stats.topGPU, showTopGPU: monitor.showTopGPU) }
-                            if monitor.showMemory { 
-                                DashboardComponents.MemoryDashboard(
-                                    memoryUsed: stats.memoryUsed, 
-                                    memoryTotal: monitor.memoryTotal, 
-                                    memoryPressure: stats.memoryPressure, 
-                                    memorySwap: stats.memorySwap, 
-                                    showAdvancedMemory: monitor.showAdvancedMemory
-                                ) 
+                        ViewThatFits(in: .vertical) {
+                            dashboardSections(stats: stats)
+                            ScrollView(showsIndicators: false) {
+                                dashboardSections(stats: stats)
                             }
-                            if monitor.hasBattery && monitor.showBattery { 
-                                DashboardComponents.BatteryDashboard(
-                                    batteryLevel: stats.batteryLevel, 
-                                    batteryIsCharging: stats.batteryIsCharging, 
-                                    batteryPowerUsage: stats.batteryPowerUsage, 
-                                    batteryAdapterWattage: stats.batteryAdapterWattage, 
-                                    batteryCycleCount: stats.batteryCycleCount, 
-                                    batteryHealth: stats.batteryHealth,
-                                    batteryTemperature: stats.batteryTemperature
-                                ) 
-                            }
-                            if monitor.showDisk || monitor.showNetwork {
-                                HStack(alignment: .top, spacing: 6) {
-                                    if monitor.showDisk {
-                                        DashboardComponents.DiskDashboard(diskReadRate: stats.diskRead, diskWriteRate: stats.diskWrite)
-                                            .frame(maxWidth: .infinity)
-                                    }
-                                    if monitor.showNetwork {
-                                        DashboardComponents.NetworkDashboard(networkDownloadRate: stats.netDown, networkUploadRate: stats.netUp)
-                                            .frame(maxWidth: .infinity)
-                                    }
-                                }
-                            }
-                            if monitor.showSystemInfo { 
-                                DashboardComponents.SystemInfoDashboard(diskFree: stats.diskFree, diskTotal: stats.diskTotal, uptime: stats.uptime) 
-                            }
-                            if monitor.showTopCPU && !stats.topCPU.isEmpty { DashboardComponents.TopCPUDashboard(topCPU: stats.topCPU) }
-                            if monitor.showTopMemory && !stats.topMemory.isEmpty { DashboardComponents.TopMemoryDashboard(topMemory: stats.topMemory) }
+                            .frame(maxHeight: 740)
                         }
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                     } else {
                         loadingPlaceholder
                     }
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 20)
                 .transition(.asymmetric(insertion: .move(edge: .leading), removal: .move(edge: .leading)))
             }
         }
         .frame(width: 340)
-        .frame(minHeight: 400, maxHeight: 1200)
         .fixedSize(horizontal: true, vertical: true)
         .background {
             VisualEffectView(material: .popover, blendingMode: .behindWindow)
@@ -75,6 +39,70 @@ struct ContentView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: isShowingSettings)
         .onAppear { monitor.isPopoverVisible = true }
         .onDisappear { monitor.isPopoverVisible = false }
+    }
+    
+    @ViewBuilder
+    private func dashboardSections(stats: SystemStats) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if monitor.showCPU {
+                DashboardComponents.CPUDashboard(
+                    cpuLoadPerCore: stats.cpuLoadPerCore,
+                    totalLoad: stats.totalCPULoad,
+                    userLoad: stats.cpuUserLoad,
+                    systemLoad: stats.cpuSystemLoad
+                )
+            }
+            if monitor.showGPU {
+                DashboardComponents.GPUDashboard(
+                    gpuLoad: stats.gpuLoad,
+                    topGPU: stats.topGPU,
+                    showTopGPU: monitor.showTopGPU
+                )
+            }
+            if monitor.showMemory {
+                DashboardComponents.MemoryDashboard(
+                    memoryUsed: stats.memoryUsed,
+                    memoryTotal: monitor.memoryTotal,
+                    memoryPressure: stats.memoryPressure,
+                    memorySwap: stats.memorySwap,
+                    showAdvancedMemory: monitor.showAdvancedMemory
+                )
+            }
+            if monitor.hasBattery && monitor.showBattery {
+                DashboardComponents.BatteryDashboard(
+                    batteryLevel: stats.batteryLevel,
+                    batteryIsCharging: stats.batteryIsCharging,
+                    batteryPowerUsage: stats.batteryPowerUsage,
+                    batteryAdapterWattage: stats.batteryAdapterWattage,
+                    batteryCycleCount: stats.batteryCycleCount,
+                    batteryHealth: stats.batteryHealth,
+                    batteryTemperature: stats.batteryTemperature
+                )
+            }
+            if monitor.showDisk || monitor.showNetwork {
+                HStack(alignment: .top, spacing: 6) {
+                    if monitor.showDisk {
+                        DashboardComponents.DiskDashboard(diskReadRate: stats.diskRead, diskWriteRate: stats.diskWrite)
+                            .frame(maxWidth: .infinity)
+                    }
+                    if monitor.showNetwork {
+                        DashboardComponents.NetworkDashboard(networkDownloadRate: stats.netDown, networkUploadRate: stats.netUp)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            if monitor.showSystemInfo {
+                DashboardComponents.SystemInfoDashboard(diskFree: stats.diskFree, diskTotal: stats.diskTotal, uptime: stats.uptime)
+            }
+            if monitor.showTopCPU && !stats.topCPU.isEmpty {
+                DashboardComponents.TopCPUDashboard(topCPU: stats.topCPU)
+            }
+            if monitor.showTopMemory && !stats.topMemory.isEmpty {
+                DashboardComponents.TopMemoryDashboard(topMemory: stats.topMemory)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 20)
     }
     
     private var mainHeader: some View {

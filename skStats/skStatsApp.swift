@@ -30,7 +30,7 @@ struct skStatsApp: App {
                         HStack(spacing: 3) {
                             Image(systemName: "memorychip")
                             if monitor.showMenuBarText {
-                                Text(FormatUtils.formatPercentage(stats.memoryUsed / monitor.memoryTotal))
+                                Text(FormatUtils.formatPercentage(stats.memoryUsed / max(monitor.memoryTotal, 1)))
                             }
                         }
                     }
@@ -63,6 +63,7 @@ struct skStatsApp: App {
                 }
             }
             .font(.system(size: 11, weight: .bold, design: .monospaced))
+            .monospacedDigit()
         }
         .menuBarExtraStyle(.window)
     }

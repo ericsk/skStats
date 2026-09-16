@@ -59,7 +59,7 @@ class SystemMonitor: ObservableObject {
                 self?.thermalState = ProcessInfo.processInfo.thermalState
             }
             
-        startMonitoring()
+        startMonitoring(immediate: true)
     }
     
     private func checkBatteryPresence() -> Bool {
@@ -77,22 +77,27 @@ class SystemMonitor: ObservableObject {
         return false
     }
     
-    func startMonitoring() {
+    func startMonitoring(immediate: Bool = false) {
         debounceTask?.cancel()
-        debounceTask = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled else { return }
-            
-            await MainActor.run {
-                timer?.cancel()
-                updateStats()
-                timer = Timer.publish(every: updateInterval, on: .main, in: .common)
-                    .autoconnect()
-                    .sink { [weak self] _ in
-                        self?.updateStats()
-                    }
+        if immediate {
+            setupTimer()
+        } else {
+            debounceTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard !Task.isCancelled, let self = self else { return }
+                self.setupTimer()
             }
         }
+    }
+    
+    private func setupTimer() {
+        timer?.cancel()
+        updateStats()
+        timer = Timer.publish(every: updateInterval, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                self?.updateStats()
+            }
     }
     
     func toggleLaunchAtLogin() {
@@ -110,9 +115,15 @@ class SystemMonitor: ObservableObject {
     }
     
     private var isUpdating = false
+    private var pendingImmediateRefresh = false
     
     func updateStats() {
-        guard !isUpdating else { return }
+        if isUpdating {
+            if isPopoverVisible {
+                pendingImmediateRefresh = true
+            }
+            return
+        }
         isUpdating = true
         
         let interval = updateInterval
@@ -132,10 +143,18 @@ class SystemMonitor: ObservableObject {
         )
         let totalMem = memoryTotal
         
-        Task {
-            let stats = await worker.fetchStats(interval: interval, options: options, totalMemory: totalMem)
-            self.currentStats = stats
+        Task { [weak self] in
+            guard let self = self else { return }
+            let rawStats = await self.worker.fetchStats(interval: interval, options: options, totalMemory: totalMem)
+            let mergedStats = rawStats.mergingPopoverData(from: self.currentStats, options: options)
+            if self.currentStats != mergedStats {
+                self.currentStats = mergedStats
+            }
             self.isUpdating = false
+            if self.pendingImmediateRefresh {
+                self.pendingImmediateRefresh = false
+                self.updateStats()
+            }
         }
     }
 }

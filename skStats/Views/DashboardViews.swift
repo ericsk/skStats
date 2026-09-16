@@ -6,36 +6,76 @@ import ServiceManagement
 struct DashboardComponents {
     struct CPUDashboard: View {
         let cpuLoadPerCore: [Double]
+        let totalLoad: Double
+        let userLoad: Double
+        let systemLoad: Double
+        
+        private func loadColor(_ value: Double) -> Color {
+            if value > 0.9 { return .red }
+            if value >= 0.7 { return .orange }
+            return .green
+        }
         
         var body: some View {
             DashboardSection(title: "CPU", icon: "cpu") {
-                VStack(spacing: 12) {
-                    let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        ForEach(0..<cpuLoadPerCore.count, id: \.self) { index in
-                            let load = cpuLoadPerCore[index]
-                            VStack(spacing: 4) {
-                                ZStack {
-                                    Gauge(value: load) {
-                                        Text("")
-                                    }
-                                    .gaugeStyle(.accessoryCircularCapacity)
-                                    .tint(load > 0.8 ? .red : (load > 0.5 ? .orange : .accentColor))
-                                    .scaleEffect(0.8)
-                                    .frame(width: 32, height: 32)
-                                    .animation(.easeInOut(duration: 0.8), value: load)
-                                    
-                                    Text(String(format: "%.0f", load * 100))
-                                        .font(.system(size: 8, weight: .bold, design: .rounded))
-                                }
-                                
-                                Text("Core \(index)")
-                                    .font(.system(size: 9, weight: .medium))
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            HStack(spacing: 6) {
+                                Text("Total Load")
+                                    .font(.system(size: 10, weight: .semibold))
                                     .foregroundColor(.secondary)
+                                Text("User \(FormatUtils.formatPercentage(userLoad)) · Sys \(FormatUtils.formatPercentage(systemLoad))")
+                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .foregroundColor(.secondary.opacity(0.8))
+                            }
+                            Spacer()
+                            Text(FormatUtils.formatPercentage(totalLoad))
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                        }
+                        
+                        Gauge(value: totalLoad) {
+                            Text("")
+                        }
+                        .gaugeStyle(.accessoryLinearCapacity)
+                        .tint(loadColor(totalLoad))
+                        .frame(height: 8)
+                        .animation(.easeInOut(duration: 0.6), value: totalLoad)
+                    }
+                    
+                    if !cpuLoadPerCore.isEmpty {
+                        Divider()
+                            .opacity(0.3)
+                        
+                        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+                        LazyVGrid(columns: columns, spacing: 14) {
+                            ForEach(0..<cpuLoadPerCore.count, id: \.self) { index in
+                                let load = cpuLoadPerCore[index]
+                                VStack(spacing: 4) {
+                                    ZStack {
+                                        Gauge(value: load) {
+                                            Text("")
+                                        }
+                                        .gaugeStyle(.accessoryCircularCapacity)
+                                        .tint(loadColor(load))
+                                        .scaleEffect(0.8)
+                                        .frame(width: 32, height: 32)
+                                        .animation(.easeInOut(duration: 0.6), value: load)
+                                        
+                                        Text(String(format: "%.0f", load * 100))
+                                            .font(.system(size: 8, weight: .bold, design: .rounded))
+                                            .monospacedDigit()
+                                    }
+                                    
+                                    Text("Core \(index)")
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundColor(.secondary)
+                                }
                             }
                         }
+                        .padding(.top, 2)
                     }
-                    .padding(.top, 2)
                 }
             }
         }
@@ -57,6 +97,7 @@ struct DashboardComponents {
                             Spacer()
                             Text(FormatUtils.formatPercentage(gpuLoad))
                                 .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .monospacedDigit()
                         }
                         
                         Gauge(value: gpuLoad) {
@@ -65,7 +106,7 @@ struct DashboardComponents {
                         .gaugeStyle(.accessoryLinearCapacity)
                         .tint(LinearGradient(colors: [.purple, .indigo, .blue], startPoint: .leading, endPoint: .trailing))
                         .frame(height: 8)
-                        .animation(.easeInOut(duration: 0.8), value: gpuLoad)
+                        .animation(.easeInOut(duration: 0.6), value: gpuLoad)
                     }
                     
                     if showTopGPU && !topGPU.isEmpty {
@@ -101,20 +142,21 @@ struct DashboardComponents {
                             .foregroundColor(.secondary)
                         Spacer()
                         HStack(spacing: 2) {
-                            Text(String(format: "%.1f", memoryUsed / 1_000_000_000))
+                            Text(String(format: "%.1f", memoryUsed / 1_073_741_824.0))
                             Text("/")
-                            Text(String(format: "%.0f GB", memoryTotal / 1_000_000_000))
+                            Text(FormatUtils.formatMemoryGB(memoryTotal))
                         }
                         .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .monospacedDigit()
                     }
                     
-                    Gauge(value: memoryUsed, in: 0...memoryTotal) {
+                    Gauge(value: memoryUsed, in: 0...max(memoryTotal, 1)) {
                         Text("")
                     }
                     .gaugeStyle(.accessoryLinearCapacity)
                     .tint(LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing))
                     .frame(height: 8)
-                    .animation(.easeInOut(duration: 0.8), value: memoryUsed)
+                    .animation(.easeInOut(duration: 0.6), value: memoryUsed)
                     
                     if showAdvancedMemory {
                         HStack(spacing: 24) {
@@ -230,20 +272,21 @@ struct DashboardComponents {
             DashboardSection(title: "System Stats", icon: "info.circle.fill") {
                 VStack(alignment: .leading, spacing: 10) {
                     if diskTotal > 0 {
-                        let used = diskTotal - diskFree
+                        let used = max(diskTotal - diskFree, 0)
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text("Disk Space")
                                     .font(.system(size: 10, weight: .semibold))
                                 Spacer()
-                                Text("\(FormatUtils.formatBytes(Double(diskFree))) free")
-                                    .font(.system(size: 10))
+                                Text("\(FormatUtils.formatBytes(Double(diskFree))) free / \(FormatUtils.formatBytes(Double(diskTotal)))")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .monospacedDigit()
                                     .foregroundColor(.secondary)
                             }
                             ProgressView(value: Double(used), total: Double(diskTotal))
                                 .progressViewStyle(.linear)
                                 .tint(Color.primary.opacity(0.6))
-                                .animation(.easeInOut(duration: 0.8), value: used)
+                                .animation(.easeInOut(duration: 0.6), value: used)
                         }
                     }
                     
@@ -251,19 +294,13 @@ struct DashboardComponents {
                         Label("Uptime", systemImage: "clock")
                             .font(.system(size: 10, weight: .semibold))
                         Spacer()
-                        Text(formatUptime(uptime))
+                        Text(FormatUtils.formatUptime(uptime))
                             .font(.system(size: 10, design: .monospaced))
+                            .monospacedDigit()
                             .foregroundColor(.secondary)
                     }
                 }
             }
-        }
-        
-        private func formatUptime(_ uptime: TimeInterval) -> String {
-            let formatter = DateComponentsFormatter()
-            formatter.allowedUnits = [.day, .hour, .minute]
-            formatter.unitsStyle = .abbreviated
-            return formatter.string(from: uptime) ?? ""
         }
     }
 
@@ -366,6 +403,7 @@ struct StatView: View {
                     .lineLimit(1)
                 Text(value)
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .monospacedDigit()
                     .foregroundColor(color)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -389,6 +427,7 @@ struct ProcessRow: View {
             Spacer()
             Text(value)
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .monospacedDigit()
                 .foregroundColor(color)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -400,7 +439,8 @@ struct ProcessRow: View {
                             
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .fill(color.opacity(isHovered ? 0.3 : 0.2))
-                                .frame(width: geo.size.width * CGFloat(load))
+                                .frame(width: geo.size.width * CGFloat(min(max(load, 0.0), 1.0)))
+                                .animation(.easeInOut(duration: 0.4), value: load)
                         }
                     }
                 )

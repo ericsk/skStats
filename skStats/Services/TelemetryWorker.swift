@@ -17,22 +17,16 @@ actor TelemetryWorker {
     private var lastUpdateTime: Date = Date()
     private var pruningCounter: Int = 0
     
-    private var gpuServices: [io_registry_entry_t] = []
-    private var batteryServices: [io_registry_entry_t] = []
+    private var gpuServices: [io_registry_entry_t]
+    private var batteryServices: [io_registry_entry_t]
+    private let ticksToNanoseconds: Double
     
     private struct ProcessCandidate {
         let pid: Int32
         let sortValue: Double
     }
     
-    private struct ProcessInfoResult {
-        let pid: Int32
-        let cpuTime: UInt64?
-        let cpuPercent: Double?
-        let residentSize: Double?
-    }
-    
-    struct FetchOptions {
+    struct FetchOptions: Sendable {
         let cpu: Bool
         let gpu: Bool
         let memory: Bool
@@ -47,7 +41,14 @@ actor TelemetryWorker {
     }
     
     init() {
-        setupCachedServices()
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        let numer = Double(max(timebase.numer, 1))
+        let denom = Double(max(timebase.denom, 1))
+        self.ticksToNanoseconds = numer / denom
+        
+        self.gpuServices = Self.discoverServices(matching: "IOAccelerator")
+        self.batteryServices = Self.discoverServices(matching: "AppleSmartBattery")
     }
     
     deinit {
@@ -59,28 +60,18 @@ actor TelemetryWorker {
         }
     }
     
-    private func setupCachedServices() {
+    private nonisolated static func discoverServices(matching serviceName: String) -> [io_registry_entry_t] {
+        var services: [io_registry_entry_t] = []
         var matchIterator: io_iterator_t = 0
-        
-        // Cache GPU Accelerator Services
-        if IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &matchIterator) == kIOReturnSuccess {
+        if IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching(serviceName), &matchIterator) == kIOReturnSuccess {
             var service: io_registry_entry_t = IOIteratorNext(matchIterator)
             while service != 0 {
-                gpuServices.append(service)
+                services.append(service)
                 service = IOIteratorNext(matchIterator)
             }
             IOObjectRelease(matchIterator)
         }
-        
-        // Cache Battery Services
-        if IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"), &matchIterator) == kIOReturnSuccess {
-            var service: io_registry_entry_t = IOIteratorNext(matchIterator)
-            while service != 0 {
-                batteryServices.append(service)
-                service = IOIteratorNext(matchIterator)
-            }
-            IOObjectRelease(matchIterator)
-        }
+        return services
     }
     
     func fetchStats(interval: Double, options: FetchOptions, totalMemory: Double) -> SystemStats {
@@ -88,7 +79,7 @@ actor TelemetryWorker {
         let realInterval = max(now.timeIntervalSince(self.lastUpdateTime), 0.1)
         self.lastUpdateTime = now
         
-        var cpu: [Double] = []
+        var cpu: (cores: [Double], user: Double, system: Double) = ([], 0, 0)
         var gpu: Double = 0
         var mem: Double = 0
         var swap: Double = 0
@@ -128,7 +119,9 @@ actor TelemetryWorker {
         }
         
         return SystemStats(
-            cpuLoadPerCore: cpu,
+            cpuLoadPerCore: cpu.cores,
+            cpuUserLoad: cpu.user,
+            cpuSystemLoad: cpu.system,
             gpuLoad: gpu,
             memoryUsed: mem,
             memorySwap: swap,
@@ -188,16 +181,25 @@ actor TelemetryWorker {
         return ProcessInfo.processInfo.systemUptime
     }
     
-    private func fetchCPU() -> [Double] {
+    private func fetchCPU() -> (cores: [Double], user: Double, system: Double) {
         var numCPUsU: natural_t = 0
         var cpuInfo: processor_info_array_t?
         var numCpuInfo: mach_msg_type_number_t = 0
         let result = host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &numCPUsU, &cpuInfo, &numCpuInfo)
-        guard result == KERN_SUCCESS, let cpuInfo = cpuInfo else { return [] }
+        guard result == KERN_SUCCESS, let cpuInfo = cpuInfo else { return ([], 0, 0) }
+        defer {
+            vm_deallocate(mach_task_self_, vm_address_t(bitPattern: cpuInfo), vm_size_t(numCpuInfo) * vm_size_t(MemoryLayout<integer_t>.stride))
+        }
         
         let numCPUs = Int(numCPUsU)
         var currentLoad: [Double] = []
+        currentLoad.reserveCapacity(numCPUs)
         var newTicks: [processor_cpu_load_info] = []
+        newTicks.reserveCapacity(numCPUs)
+        
+        var sumUserDiff: Double = 0
+        var sumSystemDiff: Double = 0
+        var sumTotalDiff: Double = 0
         
         for i in 0..<numCPUs {
             let offset = i * Int(CPU_STATE_MAX)
@@ -210,17 +212,28 @@ actor TelemetryWorker {
             
             if previousCPUTicks.count == numCPUs {
                 let prev = previousCPUTicks[i]
-                let totalDiff = Double(user + system + idle + nice) - Double(prev.cpu_ticks.0 + prev.cpu_ticks.1 + prev.cpu_ticks.2 + prev.cpu_ticks.3)
-                let activeDiff = Double(user + system + nice) - Double(prev.cpu_ticks.0 + prev.cpu_ticks.1 + prev.cpu_ticks.3)
+                let userDiff = Double(user >= prev.cpu_ticks.0 ? user - prev.cpu_ticks.0 : 0)
+                let sysDiff = Double(system >= prev.cpu_ticks.1 ? system - prev.cpu_ticks.1 : 0)
+                let idleDiff = Double(idle >= prev.cpu_ticks.2 ? idle - prev.cpu_ticks.2 : 0)
+                let niceDiff = Double(nice >= prev.cpu_ticks.3 ? nice - prev.cpu_ticks.3 : 0)
+                
+                let totalDiff = userDiff + sysDiff + idleDiff + niceDiff
+                let activeDiff = userDiff + sysDiff + niceDiff
                 let load: Double = totalDiff > 0.0 ? min(max(activeDiff / totalDiff, 0.0), 1.0) : 0.0
                 currentLoad.append(load)
+                
+                sumUserDiff += (userDiff + niceDiff)
+                sumSystemDiff += sysDiff
+                sumTotalDiff += totalDiff
             } else {
                 currentLoad.append(0.0)
             }
         }
         self.previousCPUTicks = newTicks
-        vm_deallocate(mach_task_self_, vm_address_t(bitPattern: cpuInfo), vm_size_t(numCpuInfo) * vm_size_t(MemoryLayout<integer_t>.stride))
-        return currentLoad
+        
+        let userLoad = sumTotalDiff > 0.0 ? min(max(sumUserDiff / sumTotalDiff, 0.0), 1.0) : 0.0
+        let systemLoad = sumTotalDiff > 0.0 ? min(max(sumSystemDiff / sumTotalDiff, 0.0), 1.0) : 0.0
+        return (currentLoad, userLoad, systemLoad)
     }
     
     private func fetchMemory(totalMemory: Double) -> Double {
@@ -232,10 +245,14 @@ actor TelemetryWorker {
             }
         }
         if result == KERN_SUCCESS {
-            let active = Double(stats.active_count) * Double(vm_page_size)
-            let wire = Double(stats.wire_count) * Double(vm_page_size)
-            let compressed = Double(stats.compressor_page_count) * Double(vm_page_size)
-            return min(active + wire + compressed, totalMemory)
+            let pageSize = Double(vm_kernel_page_size)
+            let appPages = stats.internal_page_count >= stats.purgeable_count
+                ? (stats.internal_page_count - stats.purgeable_count)
+                : stats.active_count
+            let appMem = Double(appPages) * pageSize
+            let wire = Double(stats.wire_count) * pageSize
+            let compressed = Double(stats.compressor_page_count) * pageSize
+            return min(max(appMem + wire + compressed, 0), totalMemory)
         }
         return 0
     }
@@ -271,7 +288,7 @@ actor TelemetryWorker {
     private func fetchNetwork64(interval: Double) -> (up: Double, down: Double) {
         var mib = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
         var len = 0
-        if sysctl(&mib, 6, nil, &len, nil, 0) < 0 {
+        if sysctl(&mib, 6, nil, &len, nil, 0) < 0 || len <= 0 {
             return fetchNetwork(interval: interval)
         }
         
@@ -291,8 +308,11 @@ actor TelemetryWorker {
                 let ifm = rawPtr.load(as: if_msghdr2.self)
                 
                 if ifm.ifm_type == UInt8(RTM_IFINFO2) {
-                    bytesIn += ifm.ifm_data.ifi_ibytes
-                    bytesOut += ifm.ifm_data.ifi_obytes
+                    let flags = Int32(ifm.ifm_flags)
+                    if (flags & (IFF_UP | IFF_RUNNING | IFF_LOOPBACK)) == (IFF_UP | IFF_RUNNING) {
+                        bytesIn += ifm.ifm_data.ifi_ibytes
+                        bytesOut += ifm.ifm_data.ifi_obytes
+                    }
                 }
                 offset += Int(ifm.ifm_msglen)
             }
@@ -317,13 +337,13 @@ actor TelemetryWorker {
         var bytesOut: UInt64 = 0
         for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
             let flags = Int32(ptr.pointee.ifa_flags)
-            if (flags & (IFF_UP|IFF_RUNNING|IFF_LOOPBACK)) == (IFF_UP|IFF_RUNNING) {
-                if let data = ptr.pointee.ifa_data {
-                    let networkData = data.assumingMemoryBound(to: if_data.self).pointee
-                    bytesIn += UInt64(networkData.ifi_ibytes)
-                    bytesOut += UInt64(networkData.ifi_obytes)
-                }
-            }
+            guard (flags & (IFF_UP | IFF_RUNNING | IFF_LOOPBACK)) == (IFF_UP | IFF_RUNNING),
+                  let addr = ptr.pointee.ifa_addr,
+                  addr.pointee.sa_family == UInt8(AF_LINK),
+                  let data = ptr.pointee.ifa_data else { continue }
+            let networkData = data.assumingMemoryBound(to: if_data.self).pointee
+            bytesIn += UInt64(networkData.ifi_ibytes)
+            bytesOut += UInt64(networkData.ifi_obytes)
         }
         var up: Double = 0
         var down: Double = 0
@@ -390,7 +410,7 @@ actor TelemetryWorker {
                     if rawMaxCap <= 100 && designCap > 100 {
                         health = 1.0
                     } else {
-                        health = rawMaxCap / designCap
+                        health = min(rawMaxCap / designCap, 1.0)
                     }
                 }
                 
@@ -414,6 +434,9 @@ actor TelemetryWorker {
     }
     
     private func fetchGPU() -> Double {
+        if gpuServices.isEmpty {
+            gpuServices = Self.discoverServices(matching: "IOAccelerator")
+        }
         for service in gpuServices {
             if let perfStats = IORegistryEntryCreateCFProperty(service, "PerformanceStatistics" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any] {
                 if let utilization = (perfStats["Device Utilization %"] as? NSNumber) ?? (perfStats["Device Utilization"] as? NSNumber) {
@@ -425,18 +448,15 @@ actor TelemetryWorker {
     }
     
     private func fetchTopGPU(interval: Double) -> [TopProcess] {
+        if gpuServices.isEmpty {
+            gpuServices = Self.discoverServices(matching: "IOAccelerator")
+        }
+        guard !gpuServices.isEmpty else { return [] }
+        
         var currentGPUTimes: [Int32: UInt64] = [:]
         var processNames: [Int32: String] = [:]
         
-        var iterator: io_iterator_t = 0
-        let matchingDict = IOServiceMatching("IOAccelerator")
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &iterator) == kIOReturnSuccess else {
-            return []
-        }
-        defer { IOObjectRelease(iterator) }
-        
-        var service = IOIteratorNext(iterator)
-        while service != 0 {
+        for service in gpuServices {
             var childIterator: io_iterator_t = 0
             if IORegistryEntryGetChildIterator(service, kIOServicePlane, &childIterator) == kIOReturnSuccess {
                 var child = IOIteratorNext(childIterator)
@@ -476,8 +496,6 @@ actor TelemetryWorker {
                 }
                 IOObjectRelease(childIterator)
             }
-            IOObjectRelease(service)
-            service = IOIteratorNext(iterator)
         }
         
         var candidates: [ProcessCandidate] = []
@@ -498,7 +516,7 @@ actor TelemetryWorker {
         let topGPUCandidates = candidates.sorted { $0.sortValue > $1.sortValue }.prefix(3)
         return topGPUCandidates.map { item in
             let name = processNames[item.pid] ?? getName(pid: item.pid)
-            return TopProcess(name: name, value: String(format: "%.1f%%", item.sortValue), sortValue: item.sortValue)
+            return TopProcess(pid: item.pid, name: name, value: String(format: "%.1f%%", item.sortValue), sortValue: item.sortValue)
         }
     }
     
@@ -507,11 +525,12 @@ actor TelemetryWorker {
         let count = pids.count
         var cpuCandidates: [ProcessCandidate] = []
         var memCandidates: [ProcessCandidate] = []
-        cpuCandidates.reserveCapacity(count)
+        cpuCandidates.reserveCapacity(32)
         memCandidates.reserveCapacity(count)
         var currentTimes: [Int32: UInt64] = [:]
+        currentTimes.reserveCapacity(count)
         
-        // Prune name cache and CPU times for dead processes less frequently
+        // Prune name cache and CPU times for dead processes periodically
         pruningCounter += 1
         if pruningCounter >= 10 {
             let currentPidsSet = Set(pids)
@@ -521,49 +540,30 @@ actor TelemetryWorker {
         }
         
         let previousTimes = self.previousProcessCPUTimes
-        var results = [ProcessInfoResult?](repeating: nil, count: count)
+        let size = Int32(MemoryLayout<proc_taskinfo>.size)
+        var usage = proc_taskinfo()
         
-        DispatchQueue.concurrentPerform(iterations: count) { index in
-            let pid = pids[index]
-            if pid <= 0 { return }
-            var usage = proc_taskinfo()
-            let size = MemoryLayout<proc_taskinfo>.size
-            if proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &usage, Int32(size)) == Int32(size) {
-                var cpuTime: UInt64? = nil
-                var cpuPercent: Double? = nil
-                var residentSize: Double? = nil
-                
+        for pid in pids {
+            if proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &usage, size) == size {
                 if showCPU {
-                    let totalTime = usage.pti_total_user + usage.pti_total_system
-                    cpuTime = totalTime
-                    if let prevTime = previousTimes[pid], interval > 0 {
-                        let delta = Double(totalTime >= prevTime ? totalTime - prevTime : 0)
-                        let percentage = (delta / 1_000_000_000.0) / interval * 100.0
+                    let totalTicks = usage.pti_total_user + usage.pti_total_system
+                    currentTimes[pid] = totalTicks
+                    if let prevTicks = previousTimes[pid], interval > 0 {
+                        let deltaTicks = Double(totalTicks >= prevTicks ? totalTicks - prevTicks : 0)
+                        let deltaNs = deltaTicks * ticksToNanoseconds
+                        let percentage = (deltaNs / 1_000_000_000.0) / interval * 100.0
                         if percentage > 0.1 {
-                            cpuPercent = percentage
+                            cpuCandidates.append(ProcessCandidate(pid: pid, sortValue: percentage))
                         }
                     }
                 }
                 
                 if showMemory {
-                    residentSize = Double(usage.pti_resident_size)
+                    let residentSize = Double(usage.pti_resident_size)
+                    if residentSize > 0 {
+                        memCandidates.append(ProcessCandidate(pid: pid, sortValue: residentSize))
+                    }
                 }
-                
-                results[index] = ProcessInfoResult(pid: pid, cpuTime: cpuTime, cpuPercent: cpuPercent, residentSize: residentSize)
-            }
-        }
-        
-        for case let res? in results {
-            if showCPU {
-                if let cpuTime = res.cpuTime {
-                    currentTimes[res.pid] = cpuTime
-                }
-                if let cpuPercent = res.cpuPercent {
-                    cpuCandidates.append(ProcessCandidate(pid: res.pid, sortValue: cpuPercent))
-                }
-            }
-            if showMemory, let mem = res.residentSize {
-                memCandidates.append(ProcessCandidate(pid: res.pid, sortValue: mem))
             }
         }
         
@@ -583,11 +583,11 @@ actor TelemetryWorker {
         }
         
         return (
-            cpu: topCPUCandidates.map { TopProcess(name: resolveName($0.pid), value: String(format: "%.1f%%", $0.sortValue), sortValue: $0.sortValue) },
+            cpu: topCPUCandidates.map { TopProcess(pid: $0.pid, name: resolveName($0.pid), value: String(format: "%.1f%%", $0.sortValue), sortValue: $0.sortValue) },
             memory: topMemCandidates.map { item -> TopProcess in
-                let mb = item.sortValue / 1024.0 / 1024.0
-                let displayValue = mb > 1024 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
-                return TopProcess(name: resolveName(item.pid), value: displayValue, sortValue: item.sortValue)
+                let mb = item.sortValue / 1_048_576.0
+                let displayValue = mb >= 1024 ? String(format: "%.1f GB", mb / 1024.0) : String(format: "%.0f MB", mb)
+                return TopProcess(pid: item.pid, name: resolveName(item.pid), value: displayValue, sortValue: item.sortValue)
             }
         )
     }
@@ -595,12 +595,12 @@ actor TelemetryWorker {
     private func getPIDs() -> [Int32] {
         let bufferSize = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
         guard bufferSize > 0 else { return [] }
-        let count = Int(bufferSize) / MemoryLayout<Int32>.size
+        let count = Int(bufferSize) / MemoryLayout<Int32>.size + 32
         var pids = [Int32](repeating: 0, count: count)
-        let actualBytes = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(bufferSize))
+        let actualBytes = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(count * MemoryLayout<Int32>.size))
         if actualBytes <= 0 { return [] }
         let actualCount = Int(actualBytes) / MemoryLayout<Int32>.size
-        return Array(pids.prefix(actualCount))
+        return pids.prefix(actualCount).filter { $0 > 0 }
     }
     
     private func getName(pid: Int32) -> String {
