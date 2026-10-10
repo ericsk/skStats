@@ -209,11 +209,12 @@ struct DashboardComponents {
                         Spacer()
                         
                         if batteryPowerUsage != 0 {
+                            let isFlowingIn = batteryIsCharging || batteryPowerUsage > 0
                             VStack(alignment: .trailing, spacing: 1) {
                                 Text(String(format: "%.1f W", abs(batteryPowerUsage)))
                                     .font(.system(size: 14, weight: .bold, design: .monospaced))
-                                    .foregroundColor(batteryPowerUsage < 0 ? .green : .primary)
-                                Text(batteryPowerUsage < 0 ? "Flow In" : "Flow Out")
+                                    .foregroundColor(isFlowingIn ? .green : .primary)
+                                Text(isFlowingIn ? "Flow In" : "Flow Out")
                                     .font(.system(size: 9, weight: .medium))
                                     .foregroundColor(.secondary)
                             }

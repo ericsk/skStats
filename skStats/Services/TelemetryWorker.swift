@@ -7,8 +7,10 @@ import IOKit.ps
 
 actor TelemetryWorker {
     private var previousCPUTicks: [processor_cpu_load_info] = []
+    private var hasPreviousDiskData: Bool = false
     private var previousDiskBytesRead: UInt64 = 0
     private var previousDiskBytesWritten: UInt64 = 0
+    private var hasPreviousNetworkData: Bool = false
     private var previousNetworkBytesIn: UInt64 = 0
     private var previousNetworkBytesOut: UInt64 = 0
     private var previousProcessCPUTimes: [Int32: UInt64] = [:]
@@ -185,7 +187,11 @@ actor TelemetryWorker {
         var numCPUsU: natural_t = 0
         var cpuInfo: processor_info_array_t?
         var numCpuInfo: mach_msg_type_number_t = 0
-        let result = host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &numCPUsU, &cpuInfo, &numCpuInfo)
+        let hostPort = mach_host_self()
+        defer {
+            mach_port_deallocate(mach_task_self_, hostPort)
+        }
+        let result = host_processor_info(hostPort, PROCESSOR_CPU_LOAD_INFO, &numCPUsU, &cpuInfo, &numCpuInfo)
         guard result == KERN_SUCCESS, let cpuInfo = cpuInfo else { return ([], 0, 0) }
         defer {
             vm_deallocate(mach_task_self_, vm_address_t(bitPattern: cpuInfo), vm_size_t(numCpuInfo) * vm_size_t(MemoryLayout<integer_t>.stride))
@@ -239,9 +245,13 @@ actor TelemetryWorker {
     private func fetchMemory(totalMemory: Double) -> Double {
         var stats = vm_statistics64()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
+        let hostPort = mach_host_self()
+        defer {
+            mach_port_deallocate(mach_task_self_, hostPort)
+        }
         let result = withUnsafeMutablePointer(to: &stats) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+                host_statistics64(hostPort, HOST_VM_INFO64, $0, &count)
             }
         }
         if result == KERN_SUCCESS {
@@ -276,9 +286,11 @@ actor TelemetryWorker {
         }
         var readRate: Double = 0
         var writeRate: Double = 0
-        if previousDiskBytesRead > 0 {
+        if hasPreviousDiskData {
             readRate = Double(totalRead >= previousDiskBytesRead ? totalRead - previousDiskBytesRead : 0) / interval
             writeRate = Double(totalWrite >= previousDiskBytesWritten ? totalWrite - previousDiskBytesWritten : 0) / interval
+        } else {
+            hasPreviousDiskData = true
         }
         self.previousDiskBytesRead = totalRead
         self.previousDiskBytesWritten = totalWrite
@@ -303,9 +315,12 @@ actor TelemetryWorker {
         buf.withUnsafeBufferPointer { bufferPtr in
             guard let baseAddress = bufferPtr.baseAddress else { return }
             var offset = 0
-            while offset < len {
+            let headerSize = MemoryLayout<if_msghdr2>.size
+            while offset + headerSize <= len {
                 let rawPtr = UnsafeRawPointer(baseAddress).advanced(by: offset)
                 let ifm = rawPtr.load(as: if_msghdr2.self)
+                let msgLen = Int(ifm.ifm_msglen)
+                guard msgLen >= headerSize else { break }
                 
                 if ifm.ifm_type == UInt8(RTM_IFINFO2) {
                     let flags = Int32(ifm.ifm_flags)
@@ -314,15 +329,17 @@ actor TelemetryWorker {
                         bytesOut += ifm.ifm_data.ifi_obytes
                     }
                 }
-                offset += Int(ifm.ifm_msglen)
+                offset += msgLen
             }
         }
         
         var up: Double = 0
         var down: Double = 0
-        if previousNetworkBytesIn > 0 {
+        if hasPreviousNetworkData {
             down = Double(bytesIn >= previousNetworkBytesIn ? bytesIn - previousNetworkBytesIn : 0) / interval
             up = Double(bytesOut >= previousNetworkBytesOut ? bytesOut - previousNetworkBytesOut : 0) / interval
+        } else {
+            hasPreviousNetworkData = true
         }
         self.previousNetworkBytesIn = bytesIn
         self.previousNetworkBytesOut = bytesOut
@@ -347,9 +364,11 @@ actor TelemetryWorker {
         }
         var up: Double = 0
         var down: Double = 0
-        if previousNetworkBytesIn > 0 {
+        if hasPreviousNetworkData {
             down = Double(bytesIn >= previousNetworkBytesIn ? bytesIn - previousNetworkBytesIn : 0) / interval
             up = Double(bytesOut >= previousNetworkBytesOut ? bytesOut - previousNetworkBytesOut : 0) / interval
+        } else {
+            hasPreviousNetworkData = true
         }
         self.previousNetworkBytesIn = bytesIn
         self.previousNetworkBytesOut = bytesOut
@@ -530,12 +549,13 @@ actor TelemetryWorker {
         var currentTimes: [Int32: UInt64] = [:]
         currentTimes.reserveCapacity(count)
         
-        // Prune name cache and CPU times for dead processes periodically
+        // Prune name cache and CPU/GPU times for dead processes periodically
         pruningCounter += 1
         if pruningCounter >= 10 {
             let currentPidsSet = Set(pids)
             nameCache = nameCache.filter { currentPidsSet.contains($0.key) }
             previousProcessCPUTimes = previousProcessCPUTimes.filter { currentPidsSet.contains($0.key) }
+            previousProcessGPUTimes = previousProcessGPUTimes.filter { currentPidsSet.contains($0.key) }
             pruningCounter = 0
         }
         

@@ -3,6 +3,7 @@ import Combine
 import SwiftUI
 import Darwin
 import IOKit
+import IOKit.ps
 import ServiceManagement
 
 @MainActor
@@ -63,16 +64,16 @@ class SystemMonitor: ObservableObject {
     }
     
     private func checkBatteryPresence() -> Bool {
-        let matchingDict = IOServiceMatching("AppleSmartBattery")
-        var iterator: io_iterator_t = 0
-        if IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &iterator) == kIOReturnSuccess {
-            let service = IOIteratorNext(iterator)
-            if service != 0 {
-                IOObjectRelease(service)
-                IOObjectRelease(iterator)
+        guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef] else {
+            return false
+        }
+        for ps in list {
+            if let desc = IOPSGetPowerSourceDescription(blob, ps)?.takeUnretainedValue() as? [String: Any],
+               let type = desc[kIOPSTypeKey] as? String,
+               type == kIOPSInternalBatteryType {
                 return true
             }
-            IOObjectRelease(iterator)
         }
         return false
     }
@@ -100,18 +101,17 @@ class SystemMonitor: ObservableObject {
             }
     }
     
-    func toggleLaunchAtLogin() {
+    func setLaunchAtLogin(_ enabled: Bool) {
         do {
-            if launchAtLogin {
+            if enabled {
                 try SMAppService.mainApp.register()
             } else {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
             print("Failed to update launch at login status: \(error)")
-            // Rollback on failure
-            launchAtLogin = SMAppService.mainApp.status == .enabled
         }
+        self.launchAtLogin = SMAppService.mainApp.status == .enabled
     }
     
     private var isUpdating = false

@@ -9,7 +9,7 @@ struct skStatsApp: App {
             ContentView(monitor: monitor)
         } label: {
             HStack(spacing: 8) {
-                if let stats = monitor.currentStats {
+                if let stats = monitor.currentStats, hasVisibleMenuBarItem {
                     if monitor.showMenuBarCPU {
                         HStack(spacing: 3) {
                             Image(systemName: "cpu")
@@ -68,6 +68,15 @@ struct skStatsApp: App {
         .menuBarExtraStyle(.window)
     }
     
+    private var hasVisibleMenuBarItem: Bool {
+        monitor.showMenuBarCPU ||
+        monitor.showMenuBarGPU ||
+        monitor.showMenuBarMemory ||
+        monitor.showMenuBarNetwork ||
+        monitor.showMenuBarDisk ||
+        (monitor.hasBattery && monitor.showMenuBarBattery)
+    }
+
     private func batteryIcon(level: Double, isCharging: Bool) -> String {
         if isCharging { return "battery.100.bolt" }
         if level < 0.1 { return "battery.0" }

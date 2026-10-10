@@ -31,10 +31,10 @@ struct SettingsView: View {
                 }
                 
                 SettingsGroup(title: "General", icon: "gearshape.fill") {
-                    Toggle("Launch at Login", isOn: $monitor.launchAtLogin)
-                        .onChange(of: monitor.launchAtLogin) { _ in
-                            monitor.toggleLaunchAtLogin()
-                        }
+                    Toggle("Launch at Login", isOn: Binding(
+                        get: { monitor.launchAtLogin },
+                        set: { monitor.setLaunchAtLogin($0) }
+                    ))
                 }
                 
                 SettingsGroup(title: "Visibility", icon: "eye.fill") {
