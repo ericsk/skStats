@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    private static let twoColumns = [GridItem(.flexible()), GridItem(.flexible())]
     @ObservedObject var monitor: SystemMonitor
     
     var body: some View {
@@ -14,8 +15,7 @@ struct SettingsView: View {
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.secondary)
                         
-                        let columns = [GridItem(.flexible()), GridItem(.flexible())]
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                        LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 10) {
                             Toggle("CPU", isOn: $monitor.showMenuBarCPU)
                             Toggle("GPU", isOn: $monitor.showMenuBarGPU)
                             Toggle("Memory", isOn: $monitor.showMenuBarMemory)
@@ -38,8 +38,7 @@ struct SettingsView: View {
                 }
                 
                 SettingsGroup(title: "Visibility", icon: "eye.fill") {
-                    let columns = [GridItem(.flexible()), GridItem(.flexible())]
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+                    LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 12) {
                         Toggle("CPU", isOn: $monitor.showCPU)
                         Toggle("GPU", isOn: $monitor.showGPU)
                         Toggle("RAM", isOn: $monitor.showMemory)

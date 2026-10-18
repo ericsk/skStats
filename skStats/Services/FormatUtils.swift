@@ -1,25 +1,17 @@
 import Foundation
 
 struct FormatUtils {
-    private static let byteFormatter: ByteCountFormatter = {
-        let f = ByteCountFormatter()
-        f.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
-        f.countStyle = .file
-        f.allowsNonnumericFormatting = false
-        return f
-    }()
-    
-    private static let uptimeFormatter: DateComponentsFormatter = {
-        let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = [.day, .hour, .minute]
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }()
-
     static func formatBytes(_ bytes: Double) -> String {
         guard !bytes.isNaN && !bytes.isInfinite && bytes > 0 else { return "0 B" }
-        if bytes < 1024 { return String(format: "%.0f B", bytes) }
-        return byteFormatter.string(fromByteCount: Int64(bytes))
+        if bytes < 1024 { return "\(Int(bytes.rounded())) B" }
+        let kb = bytes / 1024.0
+        if kb < 1024 { return "\(Int(kb.rounded())) KB" }
+        let mb = kb / 1024.0
+        if mb < 1024 { return String(format: "%.1f MB", mb) }
+        let gb = mb / 1024.0
+        if gb < 1024 { return String(format: "%.1f GB", gb) }
+        let tb = gb / 1024.0
+        return String(format: "%.2f TB", tb)
     }
     
     static func formatMemoryGB(_ bytes: Double) -> String {
@@ -42,16 +34,19 @@ struct FormatUtils {
         return String(format: "%.2f GB/s", gbps)
     }
     
+    @inline(__always)
     static func formatPercentage(_ value: Double) -> String {
         guard !value.isNaN && !value.isInfinite else { return "0%" }
-        return String(format: "%.0f%%", max(value, 0) * 100)
+        let pct = Int((max(value, 0) * 100.0).rounded())
+        return "\(pct)%"
     }
     
+    @inline(__always)
     static func formatCompactRate(_ bytesPerSecond: Double) -> String {
         guard !bytesPerSecond.isNaN && !bytesPerSecond.isInfinite && bytesPerSecond > 0 else { return "0K" }
         let kbps = bytesPerSecond / 1024.0
         if kbps < 1024 {
-            return String(format: "%.0fK", kbps)
+            return "\(Int(kbps.rounded()))K"
         }
         let mbps = kbps / 1024.0
         if mbps < 1024 {
@@ -63,6 +58,17 @@ struct FormatUtils {
     
     static func formatUptime(_ uptime: TimeInterval) -> String {
         guard !uptime.isNaN && !uptime.isInfinite && uptime > 0 else { return "0m" }
-        return uptimeFormatter.string(from: uptime) ?? "0m"
+        let totalMinutes = Int(uptime) / 60
+        let days = totalMinutes / 1440
+        let hours = (totalMinutes % 1440) / 60
+        let minutes = totalMinutes % 60
+        if days > 0 {
+            return "\(days)d \(hours)h \(minutes)m"
+        } else if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        } else {
+            return "\(minutes)m"
+        }
     }
 }
+

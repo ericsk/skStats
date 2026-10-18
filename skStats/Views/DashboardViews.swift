@@ -1,20 +1,22 @@
 import SwiftUI
-import Combine
-import IOKit
-import ServiceManagement
+import AppKit
 
 struct DashboardComponents {
-    struct CPUDashboard: View {
+    private static let coreGridColumns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+    private static let gpuGradient = LinearGradient(colors: [.purple, .indigo, .blue], startPoint: .leading, endPoint: .trailing)
+    private static let memoryGradient = LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing)
+
+    static func loadColor(_ value: Double) -> Color {
+        if value > 0.9 { return .red }
+        if value >= 0.7 { return .orange }
+        return .green
+    }
+
+    struct CPUDashboard: View, Equatable {
         let cpuLoadPerCore: [Double]
         let totalLoad: Double
         let userLoad: Double
         let systemLoad: Double
-        
-        private func loadColor(_ value: Double) -> Color {
-            if value > 0.9 { return .red }
-            if value >= 0.7 { return .orange }
-            return .green
-        }
         
         var body: some View {
             DashboardSection(title: "CPU", icon: "cpu") {
@@ -36,42 +38,21 @@ struct DashboardComponents {
                         }
                         
                         Gauge(value: totalLoad) {
-                            Text("")
+                            EmptyView()
                         }
                         .gaugeStyle(.accessoryLinearCapacity)
-                        .tint(loadColor(totalLoad))
+                        .tint(DashboardComponents.loadColor(totalLoad))
                         .frame(height: 8)
-                        .animation(.easeInOut(duration: 0.6), value: totalLoad)
                     }
                     
                     if !cpuLoadPerCore.isEmpty {
                         Divider()
                             .opacity(0.3)
                         
-                        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
-                        LazyVGrid(columns: columns, spacing: 14) {
+                        LazyVGrid(columns: DashboardComponents.coreGridColumns, spacing: 14) {
                             ForEach(0..<cpuLoadPerCore.count, id: \.self) { index in
-                                let load = cpuLoadPerCore[index]
-                                VStack(spacing: 4) {
-                                    ZStack {
-                                        Gauge(value: load) {
-                                            Text("")
-                                        }
-                                        .gaugeStyle(.accessoryCircularCapacity)
-                                        .tint(loadColor(load))
-                                        .scaleEffect(0.8)
-                                        .frame(width: 32, height: 32)
-                                        .animation(.easeInOut(duration: 0.6), value: load)
-                                        
-                                        Text(String(format: "%.0f", load * 100))
-                                            .font(.system(size: 8, weight: .bold, design: .rounded))
-                                            .monospacedDigit()
-                                    }
-                                    
-                                    Text("Core \(index)")
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundColor(.secondary)
-                                }
+                                CoreGaugeCell(index: index, load: cpuLoadPerCore[index])
+                                    .equatable()
                             }
                         }
                         .padding(.top, 2)
@@ -81,7 +62,39 @@ struct DashboardComponents {
         }
     }
 
-    struct GPUDashboard: View {
+    private struct CoreGaugeCell: View, Equatable {
+        let index: Int
+        let load: Double
+        
+        var body: some View {
+            let color = DashboardComponents.loadColor(load)
+            let clamped = CGFloat(min(max(load, 0.0), 1.0))
+            VStack(spacing: 4) {
+                ZStack {
+                    Circle()
+                        .stroke(color.opacity(0.2), lineWidth: 3)
+                        .frame(width: 26, height: 26)
+                    
+                    Circle()
+                        .trim(from: 0, to: clamped)
+                        .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 26, height: 26)
+                    
+                    Text(String(format: "%.0f", load * 100))
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                }
+                .frame(width: 32, height: 32)
+                
+                Text("Core \(index)")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    struct GPUDashboard: View, Equatable {
         let gpuLoad: Double
         let topGPU: [TopProcess]
         let showTopGPU: Bool
@@ -101,12 +114,11 @@ struct DashboardComponents {
                         }
                         
                         Gauge(value: gpuLoad) {
-                            Text("")
+                            EmptyView()
                         }
                         .gaugeStyle(.accessoryLinearCapacity)
-                        .tint(LinearGradient(colors: [.purple, .indigo, .blue], startPoint: .leading, endPoint: .trailing))
+                        .tint(DashboardComponents.gpuGradient)
                         .frame(height: 8)
-                        .animation(.easeInOut(duration: 0.6), value: gpuLoad)
                     }
                     
                     if showTopGPU && !topGPU.isEmpty {
@@ -119,14 +131,13 @@ struct DashboardComponents {
                                 ProcessRow(name: process.name, value: process.value, load: process.sortValue / max(maxGPU, 1.0), color: .purple)
                             }
                         }
-                        .animation(.easeInOut(duration: 0.3), value: topGPU)
                     }
                 }
             }
         }
     }
 
-    struct MemoryDashboard: View {
+    struct MemoryDashboard: View, Equatable {
         let memoryUsed: Double
         let memoryTotal: Double
         let memoryPressure: Double
@@ -151,17 +162,18 @@ struct DashboardComponents {
                     }
                     
                     Gauge(value: memoryUsed, in: 0...max(memoryTotal, 1)) {
-                        Text("")
+                        EmptyView()
                     }
                     .gaugeStyle(.accessoryLinearCapacity)
-                    .tint(LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing))
+                    .tint(DashboardComponents.memoryGradient)
                     .frame(height: 8)
-                    .animation(.easeInOut(duration: 0.6), value: memoryUsed)
                     
                     if showAdvancedMemory {
                         HStack(spacing: 24) {
                             StatView(label: "Pressure", value: String(format: "%.0f%%", memoryPressure), color: memoryPressure > 75 ? .red : (memoryPressure > 50 ? .orange : .green))
+                                .equatable()
                             StatView(label: "Swap", value: FormatUtils.formatBytes(memorySwap), color: .secondary)
+                                .equatable()
                         }
                         .padding(.top, 4)
                     }
@@ -170,7 +182,7 @@ struct DashboardComponents {
         }
     }
 
-    struct BatteryDashboard: View {
+    struct BatteryDashboard: View, Equatable {
         let batteryLevel: Double
         let batteryIsCharging: Bool
         let batteryPowerUsage: Double
@@ -185,12 +197,11 @@ struct DashboardComponents {
                     HStack(alignment: .center, spacing: 12) {
                         ZStack {
                             Gauge(value: batteryLevel) {
-                                Text("")
+                                EmptyView()
                             }
                             .gaugeStyle(.accessoryCircularCapacity)
                             .tint(batteryLevel < 0.2 ? .red : .green)
                             .frame(width: 40, height: 40)
-                            .animation(.easeInOut(duration: 0.8), value: batteryLevel)
                             
                             Image(systemName: batteryIsCharging ? "bolt.fill" : "battery.100")
                                 .font(.system(size: 11, weight: .bold))
@@ -226,9 +237,12 @@ struct DashboardComponents {
                     
                     HStack(spacing: 20) {
                         StatView(label: "Health", value: "\(Int(batteryHealth * 100))%", color: batteryHealth > 0.8 ? .green : (batteryHealth > 0.6 ? .orange : .red))
+                            .equatable()
                         StatView(label: "Cycles", value: "\(batteryCycleCount)", color: .secondary)
+                            .equatable()
                         if batteryTemperature > 0 {
                             StatView(label: "Temp", value: String(format: "%.1f°C", batteryTemperature), color: batteryTemperature > 45 ? .red : (batteryTemperature > 35 ? .orange : .secondary))
+                                .equatable()
                         }
                     }
                 }
@@ -236,7 +250,7 @@ struct DashboardComponents {
         }
     }
 
-    struct DiskDashboard: View {
+    struct DiskDashboard: View, Equatable {
         let diskReadRate: Double
         let diskWriteRate: Double
         
@@ -244,13 +258,15 @@ struct DashboardComponents {
             DashboardSection(title: "Disk", icon: "internaldrive") {
                 VStack(alignment: .leading, spacing: 8) {
                     StatView(label: "Read", value: FormatUtils.formatRate(diskReadRate), icon: "arrow.down.circle", color: .green)
+                        .equatable()
                     StatView(label: "Write", value: FormatUtils.formatRate(diskWriteRate), icon: "arrow.up.circle", color: .orange)
+                        .equatable()
                 }
             }
         }
     }
 
-    struct NetworkDashboard: View {
+    struct NetworkDashboard: View, Equatable {
         let networkDownloadRate: Double
         let networkUploadRate: Double
         
@@ -258,13 +274,15 @@ struct DashboardComponents {
             DashboardSection(title: "Network", icon: "wifi") {
                 VStack(alignment: .leading, spacing: 8) {
                     StatView(label: "Down", value: FormatUtils.formatRate(networkDownloadRate), icon: "arrow.down.square", color: .blue)
+                        .equatable()
                     StatView(label: "Up", value: FormatUtils.formatRate(networkUploadRate), icon: "arrow.up.square", color: .rose)
+                        .equatable()
                 }
             }
         }
     }
 
-    struct SystemInfoDashboard: View {
+    struct SystemInfoDashboard: View, Equatable {
         let diskFree: Int64
         let diskTotal: Int64
         let uptime: TimeInterval
@@ -287,7 +305,6 @@ struct DashboardComponents {
                             ProgressView(value: Double(used), total: Double(diskTotal))
                                 .progressViewStyle(.linear)
                                 .tint(Color.primary.opacity(0.6))
-                                .animation(.easeInOut(duration: 0.6), value: used)
                         }
                     }
                     
@@ -305,7 +322,7 @@ struct DashboardComponents {
         }
     }
 
-    struct TopCPUDashboard: View {
+    struct TopCPUDashboard: View, Equatable {
         let topCPU: [TopProcess]
         
         var body: some View {
@@ -316,12 +333,11 @@ struct DashboardComponents {
                         ProcessRow(name: process.name, value: process.value, load: process.sortValue / max(maxCPU, 1.0), color: .accentColor)
                     }
                 }
-                .animation(.easeInOut(duration: 0.3), value: topCPU)
             }
         }
     }
 
-    struct TopMemoryDashboard: View {
+    struct TopMemoryDashboard: View, Equatable {
         let topMemory: [TopProcess]
         
         var body: some View {
@@ -332,7 +348,6 @@ struct DashboardComponents {
                         ProcessRow(name: process.name, value: process.value, load: process.sortValue / max(maxMem, 1.0), color: .cyan)
                     }
                 }
-                .animation(.easeInOut(duration: 0.3), value: topMemory)
             }
         }
     }
@@ -384,7 +399,7 @@ struct DashboardSection<Content: View>: View {
     }
 }
 
-struct StatView: View {
+struct StatView: View, Equatable {
     let label: String
     let value: String
     var icon: String? = nil
@@ -421,6 +436,7 @@ struct ProcessRow: View {
     @State private var isHovered = false
     
     var body: some View {
+        let clampedLoad = CGFloat(min(max(load, 0.0), 1.0))
         HStack {
             Text(name)
                 .font(.system(size: 11, weight: isHovered ? .semibold : .medium))
@@ -432,20 +448,17 @@ struct ProcessRow: View {
                 .foregroundColor(color)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(color.opacity(isHovered ? 0.15 : 0.1))
-                            
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(color.opacity(isHovered ? 0.3 : 0.2))
-                                .frame(width: geo.size.width * CGFloat(min(max(load, 0.0), 1.0)))
-                                .animation(.easeInOut(duration: 0.4), value: load)
-                        }
+                .background {
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(color.opacity(isHovered ? 0.15 : 0.1))
+                        
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(color.opacity(isHovered ? 0.3 : 0.2))
+                            .scaleEffect(x: clampedLoad, y: 1.0, anchor: .leading)
                     }
-                )
-                .cornerRadius(6)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
         }
         .padding(.vertical, 2)
         .padding(.horizontal, 4)
@@ -465,22 +478,67 @@ extension Color {
     static let rose = Color(red: 255/255, green: 51/255, blue: 102/255)
 }
 
+final class PopoverVisualEffectView: NSVisualEffectView {
+    var onVisibilityChange: ((Bool) -> Void)?
+    private var windowObservers: [NSObjectProtocol] = []
+    
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        removeWindowObservers()
+        guard let window = self.window else {
+            onVisibilityChange?(false)
+            return
+        }
+        let nc = NotificationCenter.default
+        let updateVisibility: (Notification) -> Void = { [weak self, weak window] _ in
+            guard let self = self, let window = window else { return }
+            let visible = window.isVisible && window.occlusionState.contains(.visible)
+            self.onVisibilityChange?(visible)
+        }
+        windowObservers.append(nc.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main, using: updateVisibility))
+        windowObservers.append(nc.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main, using: updateVisibility))
+        windowObservers.append(nc.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self, weak window] _ in
+            guard let self = self, let window = window else { return }
+            let visible = window.isVisible && window.occlusionState.contains(.visible)
+            self.onVisibilityChange?(visible)
+        })
+        let initiallyVisible = window.isVisible && window.occlusionState.contains(.visible)
+        onVisibilityChange?(initiallyVisible)
+    }
+    
+    private func removeWindowObservers() {
+        let nc = NotificationCenter.default
+        for observer in windowObservers {
+            nc.removeObserver(observer)
+        }
+        windowObservers.removeAll()
+    }
+    
+    deinit {
+        removeWindowObservers()
+    }
+}
+
 struct VisualEffectView: NSViewRepresentable {
     let material: NSVisualEffectView.Material
     let blendingMode: NSVisualEffectView.BlendingMode
+    var onVisibilityChange: ((Bool) -> Void)? = nil
     
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
+    func makeNSView(context: Context) -> PopoverVisualEffectView {
+        let view = PopoverVisualEffectView()
         view.material = material
         view.blendingMode = blendingMode
-        view.state = .active
+        view.state = .followsWindowActiveState
+        view.onVisibilityChange = onVisibilityChange
         return view
     }
     
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+    func updateNSView(_ nsView: PopoverVisualEffectView, context: Context) {
+        nsView.onVisibilityChange = onVisibilityChange
+    }
 }
 
-struct ThermalStateBadge: View {
+struct ThermalStateBadge: View, Equatable {
     let state: ProcessInfo.ThermalState
     
     var body: some View {
@@ -531,3 +589,4 @@ struct ThermalStateBadge: View {
         }
     }
 }
+

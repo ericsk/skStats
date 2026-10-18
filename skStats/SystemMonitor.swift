@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import AppKit
 import Darwin
 import IOKit
 import IOKit.ps
@@ -11,7 +12,11 @@ class SystemMonitor: ObservableObject {
     @Published var currentStats: SystemStats? = nil
     @Published var isPopoverVisible: Bool = false {
         didSet {
-            if isPopoverVisible && !oldValue {
+            guard isPopoverVisible != oldValue else { return }
+            if isPopoverVisible {
+                if let latest = latestStats, currentStats != latest {
+                    currentStats = latest
+                }
                 updateStats()
             }
         }
@@ -44,21 +49,51 @@ class SystemMonitor: ObservableObject {
     
     @Published var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
     
+    private var latestStats: SystemStats? = nil
     private var timer: AnyCancellable?
     private var debounceTask: Task<Void, Never>?
     private let worker = TelemetryWorker()
-    private var thermalObserver: AnyCancellable?
+    private var cancellables = Set<AnyCancellable>()
+    private var isScreenSleeping = false
     
     init() {
         self.memoryTotal = Double(ProcessInfo.processInfo.physicalMemory)
         self.hasBattery = checkBatteryPresence()
         
         // Observe thermal state changes instantly
-        self.thermalObserver = NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
+        NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.thermalState = ProcessInfo.processInfo.thermalState
             }
+            .store(in: &cancellables)
+        
+        // Pause telemetry timer completely when display or system sleeps to eliminate idle power impact
+        let workspaceNC = NSWorkspace.shared.notificationCenter
+        Publishers.Merge(
+            workspaceNC.publisher(for: NSWorkspace.screensDidSleepNotification),
+            workspaceNC.publisher(for: NSWorkspace.willSleepNotification)
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            guard let self = self else { return }
+            self.isScreenSleeping = true
+            self.timer?.cancel()
+            self.timer = nil
+        }
+        .store(in: &cancellables)
+        
+        Publishers.Merge(
+            workspaceNC.publisher(for: NSWorkspace.screensDidWakeNotification),
+            workspaceNC.publisher(for: NSWorkspace.didWakeNotification)
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            guard let self = self else { return }
+            self.isScreenSleeping = false
+            self.setupTimer()
+        }
+        .store(in: &cancellables)
             
         startMonitoring(immediate: true)
     }
@@ -93,8 +128,11 @@ class SystemMonitor: ObservableObject {
     
     private func setupTimer() {
         timer?.cancel()
+        guard !isScreenSleeping else { return }
         updateStats()
-        timer = Timer.publish(every: updateInterval, on: .main, in: .common)
+        let interval = max(updateInterval, 1.0)
+        // Allow 20% timer tolerance so macOS kernel coalesces wakeups for minimal Energy Impact
+        timer = Timer.publish(every: interval, tolerance: interval * 0.2, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.updateStats()
@@ -118,38 +156,55 @@ class SystemMonitor: ObservableObject {
     private var pendingImmediateRefresh = false
     
     func updateStats() {
+        guard !isScreenSleeping else { return }
         if isUpdating {
             if isPopoverVisible {
                 pendingImmediateRefresh = true
             }
             return
         }
-        isUpdating = true
         
-        let interval = updateInterval
         let isVisible = isPopoverVisible
+        let menuText = showMenuBarText
         let options = TelemetryWorker.FetchOptions(
-            cpu: isVisible ? showCPU : showMenuBarCPU,
-            gpu: isVisible ? showGPU : showMenuBarGPU,
-            memory: isVisible ? showMemory : showMenuBarMemory,
-            disk: isVisible ? showDisk : showMenuBarDisk,
-            network: isVisible ? showNetwork : showMenuBarNetwork,
-            battery: isVisible ? showBattery : (hasBattery && showMenuBarBattery),
-            advancedMemory: isVisible ? showAdvancedMemory : false,
-            systemInfo: isVisible ? showSystemInfo : false,
-            topCPU: isVisible ? showTopCPU : false,
-            topGPU: isVisible ? showTopGPU : false,
-            topMemory: isVisible ? showTopMemory : false
+            cpu: isVisible ? showCPU : (showMenuBarCPU && menuText),
+            perCoreCPU: isVisible && showCPU,
+            gpu: isVisible ? showGPU : (showMenuBarGPU && menuText),
+            memory: isVisible ? showMemory : (showMenuBarMemory && menuText),
+            disk: isVisible ? showDisk : (showMenuBarDisk && menuText),
+            network: isVisible ? showNetwork : (showMenuBarNetwork && menuText),
+            battery: hasBattery && (isVisible ? showBattery : showMenuBarBattery),
+            detailedBattery: hasBattery && isVisible && showBattery,
+            advancedMemory: isVisible && showAdvancedMemory,
+            systemInfo: isVisible && showSystemInfo,
+            topCPU: isVisible && showTopCPU,
+            topGPU: isVisible && showTopGPU,
+            topMemory: isVisible && showTopMemory
         )
+        
+        // Skip spawning background work entirely if no telemetry is requested (e.g. popover closed & only static icons shown)
+        if !isVisible && !options.cpu && !options.gpu && !options.memory && !options.disk && !options.network && !options.battery && currentStats != nil {
+            return
+        }
+        
+        isUpdating = true
+        let interval = updateInterval
         let totalMem = memoryTotal
         
         Task { [weak self] in
             guard let self = self else { return }
             let rawStats = await self.worker.fetchStats(interval: interval, options: options, totalMemory: totalMem)
-            let mergedStats = rawStats.mergingPopoverData(from: self.currentStats, options: options)
-            if self.currentStats != mergedStats {
+            let mergedStats = rawStats.mergingPopoverData(from: self.latestStats ?? self.currentStats, options: options)
+            self.latestStats = mergedStats
+            
+            if self.isPopoverVisible {
+                if self.currentStats != mergedStats {
+                    self.currentStats = mergedStats
+                }
+            } else if self.shouldPublishMenuBarUpdate(from: self.currentStats, to: mergedStats) {
                 self.currentStats = mergedStats
             }
+            
             self.isUpdating = false
             if self.pendingImmediateRefresh {
                 self.pendingImmediateRefresh = false
@@ -157,4 +212,42 @@ class SystemMonitor: ObservableObject {
             }
         }
     }
+    
+    private func shouldPublishMenuBarUpdate(from oldStats: SystemStats?, to new: SystemStats) -> Bool {
+        guard let old = oldStats else { return true }
+        if showMenuBarText {
+            if showMenuBarCPU && FormatUtils.formatPercentage(old.totalCPULoad) != FormatUtils.formatPercentage(new.totalCPULoad) {
+                return true
+            }
+            if showMenuBarGPU && FormatUtils.formatPercentage(old.gpuLoad) != FormatUtils.formatPercentage(new.gpuLoad) {
+                return true
+            }
+            if showMenuBarMemory {
+                let denom = max(memoryTotal, 1)
+                if FormatUtils.formatPercentage(old.memoryUsed / denom) != FormatUtils.formatPercentage(new.memoryUsed / denom) {
+                    return true
+                }
+            }
+            if showMenuBarNetwork {
+                if FormatUtils.formatCompactRate(old.netUp) != FormatUtils.formatCompactRate(new.netUp) ||
+                   FormatUtils.formatCompactRate(old.netDown) != FormatUtils.formatCompactRate(new.netDown) {
+                    return true
+                }
+            }
+            if showMenuBarDisk {
+                if FormatUtils.formatCompactRate(old.diskRead) != FormatUtils.formatCompactRate(new.diskRead) ||
+                   FormatUtils.formatCompactRate(old.diskWrite) != FormatUtils.formatCompactRate(new.diskWrite) {
+                    return true
+                }
+            }
+        }
+        if hasBattery && showMenuBarBattery {
+            if old.batteryIsCharging != new.batteryIsCharging ||
+               FormatUtils.formatPercentage(old.batteryLevel) != FormatUtils.formatPercentage(new.batteryLevel) {
+                return true
+            }
+        }
+        return false
+    }
 }
+

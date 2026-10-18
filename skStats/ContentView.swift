@@ -1,8 +1,16 @@
 import SwiftUI
 
+private struct DashboardHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var monitor: SystemMonitor
     @State private var isShowingSettings = false
+    @State private var dashboardHeight: CGFloat = 0
     
     var body: some View {
         VStack(spacing: 0) {
@@ -15,13 +23,37 @@ struct ContentView: View {
                 mainHeader
                 Group {
                     if let stats = monitor.currentStats {
-                        ViewThatFits(in: .vertical) {
-                            dashboardSections(stats: stats)
-                            ScrollView(showsIndicators: false) {
-                                dashboardSections(stats: stats)
-                            }
-                            .frame(maxHeight: 740)
+                        ScrollView(showsIndicators: false) {
+                            DashboardBodyView(
+                                stats: stats,
+                                isVisible: monitor.isPopoverVisible,
+                                memoryTotal: monitor.memoryTotal,
+                                hasBattery: monitor.hasBattery,
+                                showCPU: monitor.showCPU,
+                                showGPU: monitor.showGPU,
+                                showMemory: monitor.showMemory,
+                                showBattery: monitor.showBattery,
+                                showDisk: monitor.showDisk,
+                                showNetwork: monitor.showNetwork,
+                                showSystemInfo: monitor.showSystemInfo,
+                                showTopCPU: monitor.showTopCPU,
+                                showTopGPU: monitor.showTopGPU,
+                                showTopMemory: monitor.showTopMemory,
+                                showAdvancedMemory: monitor.showAdvancedMemory
+                            )
+                            .equatable()
+                            .background(
+                                GeometryReader { geo in
+                                    Color.clear.preference(key: DashboardHeightPreferenceKey.self, value: geo.size.height)
+                                }
+                            )
                         }
+                        .onPreferenceChange(DashboardHeightPreferenceKey.self) { height in
+                            if abs(dashboardHeight - height) > 0.5 {
+                                dashboardHeight = height
+                            }
+                        }
+                        .frame(height: dashboardHeight > 0 ? min(dashboardHeight, 740) : nil)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                     } else {
                         loadingPlaceholder
@@ -31,78 +63,22 @@ struct ContentView: View {
             }
         }
         .frame(width: 340)
-        .fixedSize(horizontal: true, vertical: true)
+        .fixedSize(horizontal: true, vertical: dashboardHeight == 0 || isShowingSettings)
         .background {
-            VisualEffectView(material: .popover, blendingMode: .behindWindow)
-                .background(Color(NSColor.windowBackgroundColor).opacity(0.95))
+            VisualEffectView(
+                material: .popover,
+                blendingMode: .behindWindow,
+                onVisibilityChange: { visible in
+                    if monitor.isPopoverVisible != visible {
+                        monitor.isPopoverVisible = visible
+                    }
+                }
+            )
+            .background(Color(NSColor.windowBackgroundColor).opacity(0.95))
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: isShowingSettings)
         .onAppear { monitor.isPopoverVisible = true }
         .onDisappear { monitor.isPopoverVisible = false }
-    }
-    
-    @ViewBuilder
-    private func dashboardSections(stats: SystemStats) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if monitor.showCPU {
-                DashboardComponents.CPUDashboard(
-                    cpuLoadPerCore: stats.cpuLoadPerCore,
-                    totalLoad: stats.totalCPULoad,
-                    userLoad: stats.cpuUserLoad,
-                    systemLoad: stats.cpuSystemLoad
-                )
-            }
-            if monitor.showGPU {
-                DashboardComponents.GPUDashboard(
-                    gpuLoad: stats.gpuLoad,
-                    topGPU: stats.topGPU,
-                    showTopGPU: monitor.showTopGPU
-                )
-            }
-            if monitor.showMemory {
-                DashboardComponents.MemoryDashboard(
-                    memoryUsed: stats.memoryUsed,
-                    memoryTotal: monitor.memoryTotal,
-                    memoryPressure: stats.memoryPressure,
-                    memorySwap: stats.memorySwap,
-                    showAdvancedMemory: monitor.showAdvancedMemory
-                )
-            }
-            if monitor.hasBattery && monitor.showBattery {
-                DashboardComponents.BatteryDashboard(
-                    batteryLevel: stats.batteryLevel,
-                    batteryIsCharging: stats.batteryIsCharging,
-                    batteryPowerUsage: stats.batteryPowerUsage,
-                    batteryAdapterWattage: stats.batteryAdapterWattage,
-                    batteryCycleCount: stats.batteryCycleCount,
-                    batteryHealth: stats.batteryHealth,
-                    batteryTemperature: stats.batteryTemperature
-                )
-            }
-            if monitor.showDisk || monitor.showNetwork {
-                HStack(alignment: .top, spacing: 6) {
-                    if monitor.showDisk {
-                        DashboardComponents.DiskDashboard(diskReadRate: stats.diskRead, diskWriteRate: stats.diskWrite)
-                            .frame(maxWidth: .infinity)
-                    }
-                    if monitor.showNetwork {
-                        DashboardComponents.NetworkDashboard(networkDownloadRate: stats.netDown, networkUploadRate: stats.netUp)
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-            }
-            if monitor.showSystemInfo {
-                DashboardComponents.SystemInfoDashboard(diskFree: stats.diskFree, diskTotal: stats.diskTotal, uptime: stats.uptime)
-            }
-            if monitor.showTopCPU && !stats.topCPU.isEmpty {
-                DashboardComponents.TopCPUDashboard(topCPU: stats.topCPU)
-            }
-            if monitor.showTopMemory && !stats.topMemory.isEmpty {
-                DashboardComponents.TopMemoryDashboard(topMemory: stats.topMemory)
-            }
-        }
-        .padding(.horizontal)
-        .padding(.bottom, 20)
     }
     
     private var mainHeader: some View {
@@ -117,6 +93,7 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                     
                     ThermalStateBadge(state: monitor.thermalState)
+                        .equatable()
                 }
             }
             Spacer()
@@ -157,7 +134,10 @@ struct ContentView: View {
     
     private var settingsHeader: some View {
         HStack {
-            Button { isShowingSettings = false } label: {
+            Button {
+                isShowingSettings = false
+                monitor.updateStats()
+            } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.left")
                     Text("Back")
@@ -185,3 +165,116 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, minHeight: 400)
     }
 }
+
+private struct DashboardBodyView: View, Equatable {
+    let stats: SystemStats
+    let isVisible: Bool
+    let memoryTotal: Double
+    let hasBattery: Bool
+    let showCPU: Bool
+    let showGPU: Bool
+    let showMemory: Bool
+    let showBattery: Bool
+    let showDisk: Bool
+    let showNetwork: Bool
+    let showSystemInfo: Bool
+    let showTopCPU: Bool
+    let showTopGPU: Bool
+    let showTopMemory: Bool
+    let showAdvancedMemory: Bool
+    
+    static func == (lhs: DashboardBodyView, rhs: DashboardBodyView) -> Bool {
+        // When the popover window is hidden, skip all dashboard body evaluations during background Menu Bar updates.
+        if !lhs.isVisible && !rhs.isVisible {
+            return true
+        }
+        return lhs.isVisible == rhs.isVisible &&
+               lhs.stats == rhs.stats &&
+               lhs.memoryTotal == rhs.memoryTotal &&
+               lhs.hasBattery == rhs.hasBattery &&
+               lhs.showCPU == rhs.showCPU &&
+               lhs.showGPU == rhs.showGPU &&
+               lhs.showMemory == rhs.showMemory &&
+               lhs.showBattery == rhs.showBattery &&
+               lhs.showDisk == rhs.showDisk &&
+               lhs.showNetwork == rhs.showNetwork &&
+               lhs.showSystemInfo == rhs.showSystemInfo &&
+               lhs.showTopCPU == rhs.showTopCPU &&
+               lhs.showTopGPU == rhs.showTopGPU &&
+               lhs.showTopMemory == rhs.showTopMemory &&
+               lhs.showAdvancedMemory == rhs.showAdvancedMemory
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if showCPU {
+                DashboardComponents.CPUDashboard(
+                    cpuLoadPerCore: stats.cpuLoadPerCore,
+                    totalLoad: stats.totalCPULoad,
+                    userLoad: stats.cpuUserLoad,
+                    systemLoad: stats.cpuSystemLoad
+                )
+                .equatable()
+            }
+            if showGPU {
+                DashboardComponents.GPUDashboard(
+                    gpuLoad: stats.gpuLoad,
+                    topGPU: stats.topGPU,
+                    showTopGPU: showTopGPU
+                )
+                .equatable()
+            }
+            if showMemory {
+                DashboardComponents.MemoryDashboard(
+                    memoryUsed: stats.memoryUsed,
+                    memoryTotal: memoryTotal,
+                    memoryPressure: stats.memoryPressure,
+                    memorySwap: stats.memorySwap,
+                    showAdvancedMemory: showAdvancedMemory
+                )
+                .equatable()
+            }
+            if hasBattery && showBattery {
+                DashboardComponents.BatteryDashboard(
+                    batteryLevel: stats.batteryLevel,
+                    batteryIsCharging: stats.batteryIsCharging,
+                    batteryPowerUsage: stats.batteryPowerUsage,
+                    batteryAdapterWattage: stats.batteryAdapterWattage,
+                    batteryCycleCount: stats.batteryCycleCount,
+                    batteryHealth: stats.batteryHealth,
+                    batteryTemperature: stats.batteryTemperature
+                )
+                .equatable()
+            }
+            if showDisk || showNetwork {
+                HStack(alignment: .top, spacing: 6) {
+                    if showDisk {
+                        DashboardComponents.DiskDashboard(diskReadRate: stats.diskRead, diskWriteRate: stats.diskWrite)
+                            .equatable()
+                            .frame(maxWidth: .infinity)
+                    }
+                    if showNetwork {
+                        DashboardComponents.NetworkDashboard(networkDownloadRate: stats.netDown, networkUploadRate: stats.netUp)
+                            .equatable()
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            if showSystemInfo {
+                DashboardComponents.SystemInfoDashboard(diskFree: stats.diskFree, diskTotal: stats.diskTotal, uptime: stats.uptime)
+                    .equatable()
+            }
+            if showTopCPU && !stats.topCPU.isEmpty {
+                DashboardComponents.TopCPUDashboard(topCPU: stats.topCPU)
+                    .equatable()
+            }
+            if showTopMemory && !stats.topMemory.isEmpty {
+                DashboardComponents.TopMemoryDashboard(topMemory: stats.topMemory)
+                    .equatable()
+            }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 20)
+    }
+}
+
