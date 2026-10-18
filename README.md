@@ -45,12 +45,17 @@
 3. Select your Mac as the destination.
 4. Press `Cmd + R` to Build and Run! 
 
-### Option B: Terminal Release Build (Optimized)
-To create an optimized, high-performance production build exactly like the CI workflow does:
+### Option B: One-Command Release, Package & Install
+Run the packaging script to compile an optimized Universal binary (Apple Silicon + Intel), generate release ZIP archives, and copy `skStats.app` directly into `/Applications`:
 ```bash
-xcodebuild build -project skStats.xcodeproj -scheme skStats -configuration Release -destination 'platform=macOS' CONFIGURATION_BUILD_DIR=$(PWD)/build/Release
+./package.sh
 ```
-The compiled binary `.app` will appear in the `build/Release/` directory.
+Additional options:
+- `./package.sh --no-install`: Skips copying to `/Applications`.
+- `./package.sh --open`: Opens the `build/Release` folder in Finder when complete.
+- `./package.sh --run`: Automatically launches the freshly built app.
+
+The compiled binary (`skStats.app`) and distribution archives (`skStats.app.zip`) will appear in `build/Release/`, and the app will be installed to `/Applications/skStats.app`.
 
 ## 📄 License
 

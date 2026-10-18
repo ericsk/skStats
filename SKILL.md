@@ -38,10 +38,10 @@ xcodebuild -project skStats.xcodeproj -scheme skStats -configuration Debug -deri
 ./build/Build/Products/Debug/skStats.app/Contents/MacOS/skStats
 ```
 
-### Build & Run (Release)
+### Build & Run (Release / Package)
 ```bash
-xcodebuild -project skStats.xcodeproj -scheme skStats -configuration Release -derivedDataPath build clean build
-open build/Build/Products/Release/skStats.app
+./package.sh
+open build/Release/skStats.app
 ```
 
 ### Key Maintenance Tasks
